@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDD AI 客服管理后台</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .sidebar-item.active {
+            background-color: #f3f4f6;
+            border-right: 4px solid #3b82f6;
+        }
+
+        .message-bubble {
+            max-width: 80%;
+        }
+
+        .message-user {
+            background-color: #dbeafe;
+            align-self: flex-end;
+            border-radius: 12px 12px 0 12px;
+        }
+
+        .message-ai {
+            background-color: #f3f4f6;
+            align-self: flex-start;
+            border-radius: 12px 12px 12px 0;
+        }
+
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-50 h-screen flex overflow-hidden font-sans">
+
+    <!-- 侧边栏 -->
+    <aside class="w-64 bg-white border-r flex flex-col shadow-sm">
+        <div class="h-16 flex items-center px-6 border-b">
+            <h1 class="text-xl font-bold text-blue-600 flex items-center gap-2">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z">
+                    </path>
+                </svg>
+                AI 客服控制台
+            </h1>
+        </div>
+        <nav class="flex-1 overflow-y-auto py-4">
+            <a href="#" onclick="switchTab('dashboard')" id="tab-dashboard"
+                class="sidebar-item active flex items-center px-6 py-3 text-gray-700 hover:bg-gray-50">
+                <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z"></path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z"></path>
+                </svg>
+                仪表盘
+            </a>
+            <a href="#" onclick="switchTab('escalations')" id="tab-escalations"
+                class="sidebar-item flex items-center px-6 py-3 text-gray-700 hover:bg-gray-50 relative">
+                <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z">
+                    </path>
+                </svg>
+                待处理升级
+                <span id="badge-escalations"
+                    class="absolute right-6 bg-red-500 text-white text-xs px-2 py-0.5 rounded-full hidden">0</span>
+            </a>
+            <a href="#" onclick="switchTab('sessions')" id="tab-sessions"
+                class="sidebar-item flex items-center px-6 py-3 text-gray-700 hover:bg-gray-50">
+                <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z">
+                    </path>
+                </svg>
+                会话列表
+            </a>
+        </nav>
+    </aside>
+
+    <!-- 主内容区 -->
+    <main class="flex-1 flex flex-col h-screen overflow-hidden relative">
+        <!-- 头部 -->
+        <header class="h-16 bg-white border-b flex items-center justify-between px-8 shadow-sm z-10">
+            <h2 id="page-title" class="text-xl font-semibold text-gray-800">仪表盘</h2>
+            <div class="flex items-center gap-4 text-sm text-gray-500">
+                <button onclick="refreshData()" class="flex items-center gap-1 hover:text-blue-600 transition-colors">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
+                        </path>
+                    </svg>
+                    刷新
+                </button>
+            </div>
+        </header>
+
+        <!-- 内容面板 -->
+        <div class="flex-1 overflow-y-auto p-8" id="main-content">
+
+            <!-- Dashboard -->
+            <div id="view-dashboard" class="space-y-6 block">
+                <!-- P1-4: 今日统计卡片 -->
+                <div class="mb-8">
+                    <h3 class="text-lg font-bold text-gray-700 mb-4 flex items-center gap-2">
+                        <span class="w-1.5 h-6 bg-blue-600 rounded-full"></span>
+                        今日概况
+                    </h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div
+                            class="bg-white rounded-xl shadow-sm border-2 border-blue-50 p-6 flex items-center justify-between">
+                            <div>
+                                <p class="text-sm text-gray-500 mb-1">今日新增会话</p>
+                                <p id="stat-today-sessions" class="text-3xl font-bold text-blue-600">-</p>
+                            </div>
+                            <div class="p-4 bg-blue-50 rounded-xl text-blue-600">
+                                <svg class="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M12 4v16m8-8H4"></path>
+                                </svg>
+                            </div>
+                        </div>
+                        <div
+                            class="bg-white rounded-xl shadow-sm border-2 border-indigo-50 p-6 flex items-center justify-between">
+                            <div>
+                                <p class="text-sm text-gray-500 mb-1">今日消息总量</p>
+                                <p id="stat-today-messages" class="text-3xl font-bold text-indigo-600">-</p>
+                            </div>
+                            <div class="p-4 bg-indigo-50 rounded-xl text-indigo-600">
+                                <svg class="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z">
+                                    </path>
+                                </svg>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <h3 class="text-lg font-bold text-gray-700 mb-4 flex items-center gap-2">
+                    <span class="w-1.5 h-6 bg-gray-400 rounded-full"></span>
+                    累计指标
+                </h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                    <div class="bg-white rounded-xl shadow-sm border p-6 flex items-center justify-between">
+                        <div>
+                            <p class="text-sm text-gray-500 mb-1">活跃会话 (内存)</p>
+                            <p id="stat-active" class="text-3xl font-bold text-gray-800">-</p>
+                        </div>
+                        <div class="p-3 bg-blue-50 rounded-lg text-blue-600">
+                            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z">
+                                </path>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-xl shadow-sm border p-6 flex items-center justify-between cursor-pointer hover:border-red-300 transition-colors"
+                        onclick="switchTab('escalations')">
+                        <div>
+                            <p class="text-sm text-gray-500 mb-1">待处理升级</p>
+                            <p id="stat-pending" class="text-3xl font-bold text-red-600">-</p>
+                        </div>
+                        <div class="p-3 bg-red-50 rounded-lg text-red-600">
+                            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z">
+                                </path>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-xl shadow-sm border p-6 flex items-center justify-between">
+                        <div>
+                            <p class="text-sm text-gray-500 mb-1">总消息数 (DB)</p>
+                            <p id="stat-messages" class="text-3xl font-bold text-gray-800">-</p>
+                        </div>
+                        <div class="p-3 bg-green-50 rounded-lg text-green-600">
+                            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z">
+                                </path>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-xl shadow-sm border p-6 flex items-center justify-between">
+                        <div>
+                            <p class="text-sm text-gray-500 mb-1">知识库片段</p>
+                            <p id="stat-docs" class="text-3xl font-bold text-gray-800">-</p>
+                        </div>
+                        <div class="p-3 bg-purple-50 rounded-lg text-purple-600">
+                            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253">
+                                </path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Escalations -->
+            <div id="view-escalations" class="hidden space-y-4">
+                <div class="flex justify-between items-center bg-white p-4 rounded-xl border shadow-sm">
+                    <div class="flex gap-2">
+                        <button onclick="loadEscalations('pending')" id="btn-pending"
+                            class="px-4 py-2 bg-blue-50 text-blue-700 rounded-lg text-sm font-medium transition-colors">待处理</button>
+                        <!-- P1-5: 已接单 Tab -->
+                        <button onclick="loadEscalations('claimed')" id="btn-claimed"
+                            class="px-4 py-2 hover:bg-gray-100 text-gray-600 rounded-lg text-sm font-medium transition-colors">已接单</button>
+                        <button onclick="loadEscalations('resolved')" id="btn-resolved"
+                            class="px-4 py-2 hover:bg-gray-100 text-gray-600 rounded-lg text-sm font-medium transition-colors">已完结</button>
+                    </div>
+                </div>
+
+                <div id="escalations-list" class="grid gap-4">
+                    <!-- Dynamic -->
+                </div>
+            </div>
+
+            <!-- Sessions -->
+            <div id="view-sessions" class="hidden">
+                <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="bg-gray-50 border-b text-sm text-gray-500">
+                                <th class="py-4 px-6 font-medium">用户 ID</th>
+                                <th class="py-4 px-6 font-medium">平台</th>
+                                <th class="py-4 px-6 font-medium">状态</th>
+                                <th class="py-4 px-6 font-medium">消息数</th>
+                                <th class="py-4 px-6 font-medium">最新消息摘要</th>
+                                <th class="py-4 px-6 font-medium">更新时间</th>
+                                <th class="py-4 px-6 font-medium">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="sessions-table" class="text-sm divide-y">
+                            <!-- Dynamic -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- 聊天记录抽屉 (Slide Over) -->
+        <div id="chat-drawer"
+            class="fixed inset-y-0 right-0 w-96 bg-white shadow-2xl border-l transform translate-x-full transition-transform duration-300 ease-in-out z-50 flex flex-col">
+            <div class="p-4 border-b bg-gray-50 flex justify-between items-center">
+                <h3 class="font-semibold text-gray-800">对话记录: <span id="drawer-user-id"
+                        class="text-blue-600 font-mono text-sm"></span></h3>
+                <button onclick="closeDrawer()" class="p-1 rounded-md hover:bg-gray-200 text-gray-500">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12">
+                        </path>
+                    </svg>
+                </button>
+            </div>
+            <div id="chat-messages" class="flex-1 p-4 overflow-y-auto bg-slate-50 flex flex-col gap-4">
+                <!-- Dynamic Chat Bubbles -->
+            </div>
+        </div>
+        <!-- 遮罩层 -->
+        <div id="drawer-overlay" onclick="closeDrawer()" class="fixed inset-0 bg-black/20 hidden z-40"></div>
+
+    </main>
+
+    <!-- 处理升级 Modal -->
+    <div id="resolve-modal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-xl w-[500px] shadow-2xl flex flex-col">
+            <div class="p-6 border-b flex justify-between">
+                <h3 class="text-lg font-bold text-gray-800">标记升级已处理</h3>
+                <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600"><svg class="w-5 h-5"
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12">
+                        </path>
+                    </svg></button>
+            </div>
+            <div class="p-6">
+                <input type="hidden" id="modal-escalation-id">
+                <label class="block text-sm font-medium text-gray-700 mb-2">处理备注 (可选)</label>
+                <textarea id="modal-note" rows="4"
+                    class="w-full border rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                    placeholder="例如：已电话联系客户，确认加急订单要求..."></textarea>
+            </div>
+            <div class="p-6 border-t bg-gray-50 rounded-b-xl flex justify-end gap-3">
+                <button onclick="closeModal()"
+                    class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border rounded-lg hover:bg-gray-50">取消</button>
+                <button onclick="submitResolve()"
+                    class="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">确认处理完毕</button>
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+        // API Base
+        const API = '/api/admin';
+
+        // 状态
+        let currentTab = 'dashboard';
+        let currentEscStatus = 'pending';
+
+        // 颜色映射
+        const reasonColors = {
+            'urgent': 'text-red-800 bg-red-100 border-red-300 shadow-red-100', // Urgent: High Red
+            'bargain': 'text-orange-800 bg-orange-100 border-orange-300 shadow-orange-100', // Bargain: High Orange/Red
+            'complaint': 'text-red-900 bg-red-200 border-red-400 shadow-red-200', // Complaint: Deep Red
+            'large_order': 'text-emerald-700 bg-emerald-50 border-emerald-200',
+            'offline': 'text-cyan-700 bg-cyan-50 border-cyan-200',
+            'other': 'text-gray-700 bg-gray-50 border-gray-200',
+        };
+        const reasonLabels = {
+            'urgent': '🆘 订单加急', 'bargain': '💰 价格申诉', 'complaint': '🚫 客诉警告',
+            'large_order': '💎 大额订单', 'offline': '🤝 线下约见', 'other': '📎 其他事项'
+        };
+
+        const statusColors = {
+            'active': 'bg-green-100 text-green-800',
+            'escalated': 'bg-red-100 text-red-800',
+            'closed': 'bg-gray-100 text-gray-800'
+        };
+
+        // DOM Ready
+        document.addEventListener('DOMContentLoaded', () => {
+            refreshData();
+            // 每30秒自动刷新右上角角标
+            setInterval(fetchDashboardStats, 30000);
+        });
+
+        // 切换 Tab
+        function switchTab(tab) {
+            currentTab = tab;
+            // 更新 Sidebar 样式
+            document.querySelectorAll('.sidebar-item').forEach(el => el.classList.remove('active'));
+            document.getElementById(`tab-${tab}`).classList.add('active');
+
+            // 更新标题
+            const titles = { 'dashboard': '仪表盘', 'escalations': '人工升级管理', 'sessions': '会话列表' };
+            document.getElementById('page-title').innerText = titles[tab];
+
+            // 切换 View
+            ['dashboard', 'escalations', 'sessions'].forEach(v => {
+                document.getElementById(`view-${v}`).classList.add('hidden');
+            });
+            document.getElementById(`view-${tab}`).classList.remove('hidden');
+
+            // 加载数据
+            refreshData();
+        }
+
+        function refreshData() {
+            if (currentTab === 'dashboard') fetchDashboardStats();
+            else if (currentTab === 'escalations') loadEscalations(currentEscStatus);
+            else if (currentTab === 'sessions') fetchSessions();
+
+            // 如果不是在 dashboard，也同步更新一下角标数据
+            if (currentTab !== 'dashboard') fetchDashboardStats(true);
+        }
+
+        // --- Dashboard API ---
+        async function fetchDashboardStats(silent = false) {
+            try {
+                const res = await fetch(`${API}/stats`);
+                const data = await res.json();
+
+                if (!silent) {
+                    document.getElementById('stat-active').innerText = data.active_sessions || 0;
+                    document.getElementById('stat-pending').innerText = data.pending_escalations || 0;
+                    document.getElementById('stat-messages').innerText = data.total_messages || 0;
+                    document.getElementById('stat-docs').innerText = data.knowledge_docs || 0;
+
+                    // P1-4: 今日统计
+                    document.getElementById('stat-today-sessions').innerText = data.today_sessions || 0;
+                    document.getElementById('stat-today-messages').innerText = data.today_messages || 0;
+                }
+
+                // 更新左侧 Sidebar 角标
+                const badge = document.getElementById('badge-escalations');
+                if (data.pending_escalations > 0) {
+                    badge.innerText = data.pending_escalations;
+                    badge.classList.remove('hidden');
+                } else {
+                    badge.classList.add('hidden');
+                }
+            } catch (err) { console.error('Failed to fetch stats', err); }
+        }
+
+        // --- Escalations API ---
+        async function loadEscalations(status) {
+            currentEscStatus = status;
+
+            // 按钮样式
+            const tabs = ['pending', 'claimed', 'resolved'];
+            tabs.forEach(t => {
+                const btn = document.getElementById(`btn-${t}`);
+                if (status === t) {
+                    btn.className = 'px-4 py-2 bg-blue-50 text-blue-700 rounded-lg text-sm font-medium transition-colors';
+                } else {
+                    btn.className = 'px-4 py-2 hover:bg-gray-100 text-gray-600 rounded-lg text-sm font-medium transition-colors';
+                }
+            });
+
+            try {
+                const res = await fetch(`${API}/escalations?status=${status}`);
+                const data = await res.json();
+                const list = document.getElementById('escalations-list');
+
+                if (data.length === 0) {
+                    let label = status === 'pending' ? '待处理' : (status === 'claimed' ? '已接单' : '已完结');
+                    list.innerHTML = `<div class="text-center py-12 text-gray-400 bg-white rounded-xl border border-dashed">🎉 暂无${label}升级</div>`;
+                    return;
+                }
+
+                list.innerHTML = data.map(e => `
+                    <div class="bg-white p-6 rounded-2xl border-2 ${status === 'pending' ? 'border-red-50' : (status === 'claimed' ? 'border-blue-50' : 'border-gray-50')} shadow-md hover:shadow-lg transition-all relative overflow-hidden">
+                        ${status === 'pending' ? '<div class="absolute top-0 right-0 bg-red-500 text-white text-[10px] px-3 py-1 font-bold uppercase tracking-widest">High Alert</div>' : ''}
+                        ${status === 'claimed' ? '<div class="absolute top-0 right-0 bg-blue-500 text-white text-[10px] px-3 py-1 font-bold uppercase tracking-widest">Processing</div>' : ''}
+                        
+                        <div class="flex justify-between items-start mb-4">
+                            <div class="flex flex-wrap items-center gap-3">
+                                <span class="font-mono text-sm font-bold text-gray-800 bg-gray-100 px-2 py-1 rounded">${e.user_id}</span>
+                                <span class="text-xs font-black px-3 py-1.5 rounded-full border-2 ${status === 'pending' ? 'animate-pulse' : ''} ${reasonColors[e.reason] || reasonColors.other} shadow-sm">
+                                    🚨 ${reasonLabels[e.reason] || '其他'}
+                                </span>
+                                <div class="flex flex-col">
+                                    <span class="text-[10px] text-gray-400 uppercase font-bold">创建时间</span>
+                                    <span class="text-xs text-gray-500 font-medium">${e.created_at}</span>
+                                </div>
+                                ${e.claimed_at ? `
+                                <div class="flex flex-col border-l pl-3">
+                                    <span class="text-[10px] text-blue-400 uppercase font-bold">接单时间</span>
+                                    <span class="text-xs text-blue-500 font-medium">${e.claimed_at}</span>
+                                </div>` : ''}
+                            </div>
+                            <div class="flex gap-3">
+                                <button onclick="openDrawer('${e.user_id}')" class="text-blue-600 hover:text-blue-800 text-sm font-bold flex items-center gap-1">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                                    对话记录
+                                </button>
+                                ${status === 'pending' ?
+                        `<button onclick="claimEscalation(${e.id})" class="text-white bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 px-5 py-1.5 rounded-full text-sm font-black shadow-lg shadow-blue-200 transform hover:scale-105 transition-all">立即接单</button>` : ''}
+                                ${status === 'claimed' ?
+                        `<button onclick="openModal(${e.id})" class="text-white bg-gradient-to-r from-green-600 to-green-500 hover:from-green-700 hover:to-green-600 px-5 py-1.5 rounded-full text-sm font-black shadow-lg shadow-green-200 transform hover:scale-105 transition-all">标记解决</button>` : ''}
+                                ${status === 'resolved' ?
+                        `<span class="text-xs font-bold text-green-700 bg-green-50 border border-green-200 px-3 py-1.5 rounded-full">✅ 已完结于 ${e.resolved_at}</span>` : ''}
+                            </div>
+                        </div>
+                        
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="bg-red-50/80 p-4 rounded-xl border border-red-100 relative">
+                                <p class="text-[10px] text-red-500 uppercase font-black tracking-widest mb-2 flex items-center gap-1">
+                                    <span class="w-1.5 h-1.5 bg-red-500 rounded-full ${status === 'pending' ? 'animate-ping' : ''}"></span>
+                                    触发消息 (买家)
+                                </p>
+                                <p class="text-sm text-gray-900 leading-relaxed font-medium">${escapeHTML(e.trigger_message)}</p>
+                            </div>
+                            <div class="bg-gray-50/80 p-4 rounded-xl border border-gray-100">
+                                <p class="text-[10px] text-blue-500 uppercase font-black tracking-widest mb-2">AI 智能自动回复</p>
+                                <p class="text-sm text-gray-700 leading-relaxed italic">${escapeHTML(e.ai_reply)}</p>
+                            </div>
+                        </div>
+                        
+                        ${e.operator_name ? `
+                        <div class="mt-4 flex items-start gap-2 bg-amber-50/80 p-4 rounded-xl border border-amber-100 shadow-inner">
+                            <div class="shrink-0 w-8 h-8 rounded-full bg-amber-200 flex items-center justify-center text-amber-700 font-bold text-xs uppercase">
+                                ${e.operator_name[0]}
+                            </div>
+                            <div>
+                                <p class="text-[10px] text-amber-600 uppercase font-black tracking-tight mb-1">客服 [${e.operator_name}] 处理中...</p>
+                                <p class="text-sm text-gray-700 font-medium">${escapeHTML(e.operator_note || '暂无备注')}</p>
+                            </div>
+                        </div>` : ''}
+                    </div>
+                `).join('');
+            } catch (err) { console.error('Failed to load escalations', err); }
+        }
+
+        async function claimEscalation(id) {
+            try {
+                const res = await fetch(`${API}/escalations/${id}/claim`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ operator_name: "人工客服_01" }) // 实际应从登录系统获取
+                });
+                if (res.ok) {
+                    loadEscalations('claimed'); // 切换到已接单
+                    fetchDashboardStats(true);
+                } else {
+                    alert('接单失败');
+                }
+            } catch (err) { alert('网络异常'); }
+        }
+
+        // --- Sessions API ---
+        async function fetchSessions() {
+            try {
+                const res = await fetch(`${API}/sessions`);
+                const data = await res.json();
+                const tbody = document.getElementById('sessions-table');
+
+                tbody.innerHTML = data.map(s => `
+                    <tr class="hover:bg-gray-50 transition-colors">
+                        <td class="py-4 px-6 font-mono font-medium text-gray-700">${s.user_id}</td>
+                        <td class="py-4 px-6 uppercase text-xs text-gray-500">${s.platform}</td>
+                        <td class="py-4 px-6">
+                            <span class="px-2.5 py-1 text-xs font-semibold rounded-full ${statusColors[s.status] || 'bg-gray-100 text-gray-600'}">
+                                ${s.status}
+                            </span>
+                        </td>
+                        <td class="py-4 px-6 font-bold text-gray-600">${s.message_count}</td>
+                        <td class="py-4 px-6 max-w-xs truncate text-gray-500" title="${escapeHTML(s.last_message)}">
+                            <span class="mr-1 ${s.last_role === 'assistant' ? 'text-blue-500' : 'text-green-500'}">
+                                ${s.last_role === 'assistant' ? 'AI:' : '买家:'}
+                            </span>
+                            ${escapeHTML(s.last_message)}
+                        </td>
+                        <td class="py-4 px-6 text-gray-400">${s.updated_at}</td>
+                        <td class="py-4 px-6">
+                            <button onclick="openDrawer('${s.user_id}')" class="text-blue-600 hover:text-blue-800 font-medium text-sm">记录</button>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (err) { console.error('Failed to fetch sessions', err); }
+        }
+
+        // --- 抽屉 (对话记录) ---
+        async function openDrawer(user_id) {
+            document.getElementById('drawer-user-id').innerText = user_id;
+            const container = document.getElementById('chat-messages');
+            container.innerHTML = '<div class="text-center py-4 text-gray-400">加载中...</div>';
+
+            // 显示面板
+            document.getElementById('chat-drawer').classList.remove('translate-x-full');
+            document.getElementById('drawer-overlay').classList.remove('hidden');
+
+            try {
+                const res = await fetch(`${API}/sessions/${user_id}/messages`);
+                const messages = await res.json();
+
+                if (messages.length === 0) {
+                    container.innerHTML = '<div class="text-center py-4 text-gray-400">无对话记录</div>';
+                    return;
+                }
+
+                container.innerHTML = messages.map(m => {
+                    const isUser = m.role === 'user';
+                    return `
+                    <div class="flex flex-col message-bubble ${isUser ? 'message-user' : 'message-ai'} p-3 shadow-sm">
+                        <div class="text-[10px] text-gray-400 mb-1 flex justify-between">
+                            <span class="font-bold uppercase">${m.role}</span>
+                            <span>${m.created_at}</span>
+                        </div>
+                        <div class="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">${escapeHTML(m.content)}</div>
+                    </div>
+                    `;
+                }).join('');
+
+                // 滚动到底部
+                container.scrollTop = container.scrollHeight;
+            } catch (err) {
+                container.innerHTML = '<div class="text-center py-4 text-red-400">加载失败</div>';
+            }
+        }
+
+        function closeDrawer() {
+            document.getElementById('chat-drawer').classList.add('translate-x-full');
+            document.getElementById('drawer-overlay').classList.add('hidden');
+        }
+
+        // --- 弹窗 (处理升级) ---
+        function openModal(id) {
+            document.getElementById('modal-escalation-id').value = id;
+            document.getElementById('modal-note').value = '';
+            document.getElementById('resolve-modal').classList.remove('hidden');
+            document.getElementById('resolve-modal').classList.add('flex');
+        }
+
+        function closeModal() {
+            document.getElementById('resolve-modal').classList.add('hidden');
+            document.getElementById('resolve-modal').classList.remove('flex');
+        }
+
+        async function submitResolve() {
+            const id = document.getElementById('modal-escalation-id').value;
+            const note = document.getElementById('modal-note').value;
+
+            try {
+                const res = await fetch(`${API}/escalations/${id}/resolve`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ operator_note: note })
+                });
+
+                if (res.ok) {
+                    closeModal();
+                    loadEscalations(currentEscStatus); // 刷新当前列表
+                    fetchDashboardStats();      // 刷新角标
+                } else {
+                    alert('处理失败');
+                }
+            } catch (err) {
+                alert('网络异常');
+            }
+        }
+
+        // --- 工具函数 ---
+        function escapeHTML(str) {
+            if (!str) return '';
+            return str.replace(/[&<>'"]/g,
+                tag => ({
+                    '&': '&amp;',
+                    '<': '&lt;',
+                    '>': '&gt;',
+                    "'": '&#39;',
+                    '"': '&quot;'
+                }[tag] || tag)
+            );
+        }
+    </script>
+</body>
+
+</html>
