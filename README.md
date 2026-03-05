@@ -1,69 +1,254 @@
-# PDD E-Commerce AI Bot
+<div align="center">
 
-本项目是一个专为拼多多等国内电商平台设计的高并发、智能客服机器人。采用基于大模型（LLM）的 RAG（检索增强生成）架构，实现了“低成本、高并发、可持续学习”的商业闭环。
+# 🤖 PDD AI 电商客服机器人
 
-## 🎯 项目目标
+**拼多多 · 智能客服 + 生产流水线 + 人工干预池 · 一体化管理平台**
 
-1.  **高并发处理：** 初始支持 10+ 用户并发请求，通过多 API Key 轮询机制（Round-Robin）突破单一 API 速率限制（Rate Limit）。后续可无缝扩容。
-2.  **RAG 动态记忆与学习：** 不使用昂贵的模型微调（Fine-tuning），而是采用本地向量数据库（Vector DB），按需加载知识库和历史话术，降低 Token 消耗并提升响应速度。
-3.  **多用户隔离：** 保证每个用户的上下文独立，互不串话。
-4.  **人设与角色分离：** 模块化管理人设提示词（System Prompts），实现“千人千面”或灵活调整客服语气（如“温柔催付”、“专业售后”）。
+[![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![ChromaDB](https://img.shields.io/badge/ChromaDB-RAG-orange)](https://trychroma.com)
+[![License](https://img.shields.io/badge/license-MIT-purple)](LICENSE)
+[![Status](https://img.shields.io/badge/status-Production-brightgreen)]()
 
-## 🏗️ 架构与技术栈
+</div>
 
--   **核心语言：** Python 3.10+ (纯异步开发，提升并发性能)
--   **Web 框架：** FastAPI (用于接收电商平台的 Webhook 消息和构建管理后台 API)
--   **大模型调用网关：** LiteLLM (极好的多 API Key 负载均衡工具，支持智谱、DeepSeek、Gemini 等全系模型)
--   **向量数据库 (长期记忆 & 学习)：** ChromaDB (本地轻量级向量库，存储“历史优秀人工回复”与“商品详情手册”)
--   **关系型数据库 (订单/用户状态)：** SQLite (初期) -> MySQL (扩容期)
--   **会话缓存 (短期记忆)：** Redis / 内存 Dict (管理多并发用户的临时对话上下文)
+---
 
-## 📂 目录结构说明
+## 📖 项目简介
+
+**PDD AI Bot** 是一套专为拼多多电商平台打造的全栈智能客服系统。它将 **大语言模型（LLM）** 与 **RAG 检索增强生成** 深度融合，配备精美的 Web 管理控制台，使商家能以极低成本实现 7×24 小时自动客服，并无缝衔接人工干预。
+
+> 项目已在实际生产环境稳定运行，支持同时服务多个并发买家咨询。
+
+## ✨ 核心功能
+
+| 功能模块 | 描述 |
+|---|---|
+| 🧠 **RAG 智能问答** | ChromaDB 向量库 + GLM 大模型，精准检索商品知识、FAQ、政策文档 |
+| 🔄 **多 Key 熔断机制** | 多 API Key 轮询 + 指数退避重试，高峰期不宕机 |
+| 📊 **实时监控大屏** | Vue3 驱动的动态控制台，3s 轮询刷新所有核心指标 |
+| 🚨 **人工干预池** | 自动识别投诉/砍价/大额订单，一键接单・标记完成 |
+| 🏭 **PPT 生产流水线** | 与 NotebookLM 打通（Playwright 自动化），全程追踪生产状态 |
+| 📚 **知识库管理 UI** | 在线新增/删除 RAG 知识片段，无需运行脚本 |
+| 🔐 **HTTP Basic Auth** | 管理后台受 Basic Auth 保护，开箱即用的安全层 |
+| 🗃️ **SQLite WAL 并发** | WAL 模式 + busy_timeout，高并发读写无锁死 |
+
+---
+
+## 🏗️ 技术架构
 
 ```
-pdd-e-commerce-bot/
-├── config/             # 配置文件目录 (API keys, 数据库连接等)
-├── data/               # 本地数据存储
-│   ├── chroma/         # 向量数据库存储目录
-│   └── sqlite/         # 关系型数据库存储目录
-├── docs/               # 项目文档和设计图
-├── src/                # 核心源代码
-│   ├── api/            # FastAPI 路由层 (Webhook 接收端)
-│   ├── core/           # 核心逻辑 (多账号路由, 提示词管理, RAG调度)
-│   ├── models/         # 数据模型 (Pydantic / SQLAlchemy)
-│   ├── services/       # 业务服务 (商品查询, 订单操作, 平台API调用)
-│   └── utils/          # 工具类 (日志, 加密等)
-├── tests/              # 单元测试与集成测试
-├── .env.example        # 环境变量模板
-└── README.md           # 本文件
+┌──────────────────────────────────────────────────────────────┐
+│               拼多多卖家平台 / Webhook 推送                    │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ POST /webhook
+                            ▼
+┌──────────────────────────────────────────────────────────────┐
+│                   FastAPI  Application                        │
+│  ┌───────────┐  ┌──────────────┐  ┌─────────────────────┐   │
+│  │  Webhook  │  │  Dashboard   │  │   Admin API          │   │
+│  │  Router   │  │  Router      │  │   Router             │   │
+│  └─────┬─────┘  └──────────────┘  └─────────────────────┘   │
+│        │                                                       │
+│        ▼                                                       │
+│  ┌──────────────────────────────────────────────────────┐    │
+│  │              Core Pipeline                            │    │
+│  │  SessionManager → EscalationDetector → LLMClient     │    │
+│  │                        ↕                              │    │
+│  │               RAGEngine (ChromaDB)                    │    │
+│  └──────────────────────────────────────────────────────┘    │
+│        │                                                       │
+│        ▼                                                       │
+│  ┌──────────────┐    ┌──────────────┐    ┌────────────────┐  │
+│  │  SQLite WAL  │    │  ChromaDB    │    │  RQ Task Queue │  │
+│  │  (Sessions,  │    │  (Vectors)   │    │  (PPT 异步生产) │  │
+│  │   Orders,    │    │              │    │                │  │
+│  │  Escalations)│    │              │    │                │  │
+│  └──────────────┘    └──────────────┘    └────────────────┘  │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-## 🧠 关于“学习”与“记忆”机制 (RAG 架构解析)
+**技术选型**
 
-由于我们使用的是第三方大模型 API（如智谱、Gemini），我们**不能**直接通过喂数据来“修改”模型本身（这叫微调 Fine-tuning，成本极高且容易灾难性遗忘）。
+| 层级 | 技术 |
+|---|---|
+| Web 框架 | FastAPI + Uvicorn |
+| 大模型 | 智谱 GLM-4 / DeepSeek / Gemini（可切换）|
+| 向量检索 | ChromaDB + 智谱 Embedding-3 |
+| 关系数据库 | SQLite（WAL 模式）|
+| 任务队列 | Redis + RQ |
+| 前端 | Vue 3 (CDN) + Tailwind CSS |
+| 自动化 | Playwright（NotebookLM 操控）|
 
-我们采用的是 **RAG（Retrieval-Augmented Generation，检索增强生成）** 机制，原理如下：
+---
 
-1.  **准备“教材”（入库）：** 我们将人工客服积累的 Q&A、商品详情说明书、退换货规则转化为“向量（一串数字）”，存入 ChromaDB 中。
-2.  **客户提问（检索）：** 客户发来一句：“这个键盘轴体容易坏吗？”
-3.  **按需加载（匹配）：** 系统在把问题发给大模型**之前**，先去 ChromaDB 里搜索与“键盘轴体坏”最相关的 2-3 条知识点。
-4.  **组装发送（生成）：** 系统将 `[系统人设] + [刚刚搜出来的这 3 条知识点] + [最近 5 句聊天记录] + [客户最新提问]` 一起打包，发送给大模型。
-5.  **返回结果：** 大模型基于你刚刚“临时塞给它”的知识点，给出准确回复。
+## 📂 目录结构
 
-**为什么这样好？**
-- 极大节省 Token，因为只有相关的知识才会发送。
-- AI 的回答会越来越准，你只需要不断向 ChromaDB 里添加“优质的人工回复”即可，这就是本系统“越用越聪明”的学习本质。
+```
+pdd-ecommerce-bot/
+├── config/
+│   └── settings.py          # Pydantic Settings，读取 .env
+├── data/
+│   ├── chroma/              # ChromaDB 向量存储
+│   ├── sqlite/              # SQLite 数据库
+│   └── knowledge/           # RAG 源文档（Markdown）
+├── docs/
+│   ├── design-system.md     # 前端设计规范
+│   └── screenshot-v1-...    # 控制台截图
+├── scripts/
+│   ├── load_knowledge.py    # 批量加载知识到 ChromaDB
+│   ├── auth_notebooklm.py   # Playwright 登录 NotebookLM（首次运行）
+│   └── create_launcher_app.sh
+├── src/
+│   ├── api/
+│   │   ├── webhook.py       # PDD Webhook 接收 & 处理
+│   │   ├── dashboard.py     # 实时监控大屏 API
+│   │   └── admin.py         # 管理后台 API（知识库/升级/统计）
+│   ├── core/
+│   │   ├── llm_client.py    # LLM 多 Key 熔断 + 重试
+│   │   ├── rag_engine.py    # ChromaDB 检索 + 相关性阈值过滤
+│   │   ├── session_manager.py  # 多用户会话隔离（线程安全）
+│   │   └── escalation_detector.py  # 投诉/砍价意图识别
+│   ├── models/
+│   │   └── database.py      # SQLAlchemy 模型（Session/Message/Escalation/Order）
+│   ├── services/
+│   │   ├── db_service.py    # 数据库 CRUD 服务层
+│   │   ├── task_coordinator.py  # PPT 生产流程编排
+│   │   ├── notebooklm_playwright.py  # Playwright 自动化
+│   │   └── pdd_api_client.py  # PDD 开放平台API（主动消息）
+│   └── utils/
+│       ├── auth.py          # HTTP Basic Auth 工具
+│       └── logger.py        # 结构化日志
+├── templates/
+│   ├── dashboard.html       # 主控制台（侧边栏布局）
+│   └── admin.html           # 老版管理后台（兼容入口）
+├── .env.example             # 环境变量模板
+├── launch.sh                # 一键启动/停止/重启脚本
+├── main.py                  # FastAPI 应用入口
+├── worker.py                # RQ Worker 入口
+└── requirements.txt
+```
 
-## 🚀 后续开发路线 (Roadmap)
+---
 
-- [ ] **Phase 1: 基础脚手架建设**
-  - [ ] 初始化 FastAPI 应用与日志系统
-  - [ ] 跑通第一个大模型 API 调用（含重试、超时控制）
-- [ ] **Phase 2: RAG 与记忆核心**
-  - [ ] 接入 ChromaDB，实现基础文本的向量化（Embedding）和存储。
-  - [ ] 实现用户的 Session 隔离（多并发缓存机制）。
-- [ ] **Phase 3: 提示词工程与角色预设**
-  - [ ] 编写并测试“高情商客服”System Prompt。
-  - [ ] 组装检索结果到最终 Prompt 中。
-- [ ] **Phase 4: 平台适配（模拟测试）**
-  - [ ] 编写模拟的 PDD Webhook 接口，进行 10 并发压力测试。
+## 🚀 快速启动
+
+### 1. 安装依赖
+
+```bash
+git clone https://github.com/daxia778/pdd-ecommerce-bot.git
+cd pdd-ecommerce-bot
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 2. 配置环境变量
+
+```bash
+cp .env.example .env
+# 编辑 .env，填入 API Keys 和 Admin 密码
+```
+
+`.env` 关键配置项：
+
+```env
+# LLM - 支持逗号分隔多个 Key（自动轮询）
+ZHIPU_API_KEYS=key1,key2,key3
+
+# 管理后台登录
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=your_strong_password
+
+# PDD 开放平台（可选，用于主动发消息）
+PDD_APP_KEY=
+PDD_APP_SECRET=
+PDD_ACCESS_TOKEN=
+```
+
+### 3. 加载知识库
+
+```bash
+python scripts/load_knowledge.py
+```
+
+### 4. 启动服务
+
+```bash
+# 直接启动（开发）
+./launch.sh start
+
+# 查看状态
+./launch.sh status
+
+# 重启
+./launch.sh restart
+```
+
+服务启动后访问：
+- 🖥️ **管理控制台**：`http://localhost:8100/` （需 Basic Auth）
+- 📋 **API 文档**：`http://localhost:8100/docs`
+- 🏥 **健康检查**：`http://localhost:8100/health`
+
+---
+
+## 🖼️ 界面截图
+
+> 管理控制台 — 持久侧边栏布局，实时轮询刷新。
+
+![控制台截图](docs/screenshot-v1-dashboard.png)
+
+---
+
+## 🧠 RAG 工作原理
+
+```
+买家消息
+    │
+    ▼
+Embedding（文字 → 向量）
+    │
+    ▼
+ChromaDB 相似度检索（Top-3，阈值 ≥ 0.3）
+    │
+    ├── 匹配到知识 ──► [系统人设] + [知识片段] + [近10轮对话] + [买家消息]
+    │                          │
+    │                      GLM-4 Flash
+    │                          │
+    └── 无匹配     ──►       回复买家
+```
+
+**核心优势：**
+- 📉 **极低 Token 消耗**：仅将相关知识注入 Prompt
+- 🔄 **持续学习**：管理后台直接在线添加新知识，无需重启
+- 🎯 **相关性过滤**：低于阈值（默认 0.3）的噪音片段自动排除
+
+---
+
+## 🛡️ 人工干预机制
+
+系统基于关键词 + 语义分析，自动识别以下场景并转人工：
+
+| 触发类型 | 示例关键词 |
+|---|---|
+| 🚨 紧急投诉 | 投诉、曝光、12315、消费者协会 |
+| 💰 砍价/价格纠纷 | 便宜点、打折、少一点 |
+| 📦 大额订单 | 批发、团购、几百件 |
+| 📵 要求工作人员 | 人工、真人、客服 |
+| ⚙️ 系统异常 | AI 回复连续失败 |
+
+所有转人工记录在控制台「人工干预池」面板可视化管理，支持**接单 → 处理 → 完结**完整状态流转。
+
+---
+
+## 📋 环境要求
+
+- Python 3.10+
+- Redis（用于任务队列，可选）
+- 智谱 API Key（必须）或 DeepSeek / Gemini（二选一）
+
+---
+
+## 📄 License
+
+MIT © 2026 [daxia778](https://github.com/daxia778)
