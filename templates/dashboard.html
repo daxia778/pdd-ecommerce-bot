@@ -9,327 +9,487 @@
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        body {
-            background-color: #f3f4f6;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-        }
-
-        .scrollbar-hide::-webkit-scrollbar {
+        [v-cloak] {
             display: none;
         }
 
-        .scrollbar-hide {
-            -ms-overflow-style: none;
-            scrollbar-width: none;
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+            background-color: #f3f4f6;
+        }
+
+        .sidebar {
+            background-color: #1e293b;
+            transition: all 0.3s ease;
+        }
+
+        .sidebar-item {
+            display: flex;
+            align-items: center;
+            padding: 0.75rem 1rem;
+            color: #94a3b8;
+            border-radius: 0.5rem;
+            transition: all 0.2s;
+            cursor: pointer;
+            margin-bottom: 0.25rem;
+        }
+
+        .sidebar-item:hover {
+            background-color: #334155;
+            color: white;
+        }
+
+        .sidebar-item.active {
+            background-color: #2563eb;
+            color: white;
+        }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(229, 231, 235, 0.5);
+        }
+
+        .chat-scroll::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .chat-scroll::-webkit-scrollbar-thumb {
+            background: #e2e8f0;
+            border-radius: 10px;
         }
     </style>
 </head>
 
-<body class="bg-gray-100 min-h-screen">
-    <div id="app" class="p-6 max-w-7xl mx-auto" v-cloak>
-
-        <!-- Header -->
-        <header class="mb-8 flex justify-between items-center">
-            <div>
-                <h1 class="text-3xl font-bold text-gray-800">🤖 拼多多 AI 生产管线控制台</h1>
-                <p class="text-gray-500 mt-2">实时监控 AI 客服会话与 PPT 自动化生产进度</p>
+<body class="bg-gray-100 min-h-screen flex">
+    <div id="app" class="flex w-full" v-cloak>
+        <!-- Left Sidebar Navigation -->
+        <aside class="sidebar w-64 min-h-screen text-white p-4 flex flex-col shadow-2xl fixed lg:static z-50">
+            <div class="flex items-center space-x-3 px-2 mb-10">
+                <div class="bg-blue-600 p-2 rounded-lg">
+                    <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                </div>
+                <h1 class="text-xl font-bold tracking-tight">PDD Bot AI</h1>
             </div>
-            <div class="flex space-x-4">
-                <div class="bg-white p-3 rounded-lg shadow text-center">
-                    <p class="text-sm text-gray-500">活跃咨询</p>
-                    <p class="text-2xl font-bold text-blue-600">{{ stats.active_sessions || 0 }}</p>
+
+            <nav class="flex-1 space-y-1">
+                <div v-for="item in navItems" :key="item.id" @click="activePanel = item.id"
+                    :class="['sidebar-item', activePanel === item.id ? 'active' : '']">
+                    <span class="mr-3 text-lg" v-html="item.icon"></span>
+                    <span class="font-medium">{{ item.name }}</span>
                 </div>
-                <div class="bg-white p-3 rounded-lg shadow text-center">
-                    <p class="text-sm text-gray-500">待办审批</p>
-                    <p class="text-2xl font-bold text-red-600">{{ stats.pending_escalations || 0 }}</p>
-                </div>
-                <div class="bg-white p-3 rounded-lg shadow text-center">
-                    <p class="text-sm text-gray-500">生产中订单</p>
-                    <p class="text-2xl font-bold text-green-600">{{ stats.active_orders || 0 }}</p>
+            </nav>
+
+            <div class="mt-auto pt-6 border-t border-slate-700">
+                <div class="flex items-center space-x-3 px-2">
+                    <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-purple-500"></div>
+                    <div>
+                        <p class="text-sm font-semibold">Admin</p>
+                        <p class="text-xs text-slate-400">系统管理员</p>
+                    </div>
                 </div>
             </div>
-        </header>
+        </aside>
 
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-            <!-- Left Column: Active Chats & Chat History -->
-            <div class="lg:col-span-1 flex flex-col gap-6">
-                <!-- Active Sessions -->
-                <div class="bg-white rounded-xl shadow p-5 h-96 flex flex-col">
-                    <h2 class="text-xl font-semibold mb-4 flex items-center">
-                        <span class="w-3 h-3 rounded-full bg-green-500 mr-2 animate-pulse"></span>
-                        实时咨询队列
-                    </h2>
-                    <div class="overflow-y-auto flex-1 pr-2">
-                        <div v-for="session in sessions" :key="session.id" @click="viewChat(session.user_id)"
-                            class="p-3 mb-3 border rounded-lg cursor-pointer hover:bg-blue-50 transition-colors"
-                            :class="{'border-blue-500 bg-blue-50': selectedUser === session.user_id}">
-                            <div class="flex justify-between">
-                                <span class="font-medium text-gray-700">{{ session.user_id }}</span>
-                                <span class="text-xs bg-gray-200 px-2 py-1 rounded">{{ session.platform }}</span>
-                            </div>
-                            <div class="text-sm text-gray-500 mt-2 flex justify-between">
-                                <span>消息数: {{ session.message_count }}</span>
-                                <span>{{ session.updated_at.split(' ')[1] }}</span>
-                            </div>
+        <!-- Main Content Area -->
+        <main class="flex-1 flex flex-col min-w-0 bg-gray-50 overflow-hidden h-screen">
+            <!-- Top Header (Stats) -->
+            <header class="h-16 border-b bg-white flex items-center justify-between px-8 shrink-0">
+                <div class="flex items-center space-x-2">
+                    <span class="text-gray-400">当前模块 /</span>
+                    <span class="font-semibold text-gray-800">{{ currentPanelName }}</span>
+                </div>
+                <div class="flex items-center space-x-6">
+                    <div class="flex items-center space-x-4 text-sm">
+                        <div class="flex items-center">
+                            <span class="w-2 h-2 rounded-full bg-blue-500 mr-2"></span>
+                            <span class="text-gray-500">会话:</span>
+                            <span class="ml-1 font-bold">{{ stats.active_sessions || 0 }}</span>
                         </div>
-                        <div v-if="sessions.length === 0" class="text-center text-gray-500 py-10">暂无活跃对话</div>
-                    </div>
-                </div>
-
-                <!-- Chat History Window -->
-                <div class="bg-white rounded-xl shadow flex flex-col h-[500px]">
-                    <div class="p-4 border-b bg-gray-50 rounded-t-xl">
-                        <h3 class="font-semibold text-gray-700">对话详情: {{ selectedUser || '请选择左侧会话' }}</h3>
-                    </div>
-                    <div class="flex-1 p-4 overflow-y-auto" id="chat-window">
-                        <div v-if="!selectedUser" class="text-center text-gray-400 mt-20">点击上方用户查看对话记录</div>
-
-                        <div v-for="(msg, index) in currentChat" :key="index" class="mb-4">
-                            <!-- User Message -->
-                            <div v-if="msg.role === 'user'" class="flex justify-end">
-                                <div
-                                    class="bg-blue-100 text-blue-900 px-4 py-2 rounded-lg rounded-tr-none max-w-[80%] shadow-sm">
-                                    <p class="text-sm">{{ msg.content }}</p>
-                                    <span class="text-[10px] text-blue-700/50 mt-1 block text-right">{{ msg.created_at
-                                        }}</span>
-                                </div>
-                            </div>
-                            <!-- AI Message -->
-                            <div v-else class="flex justify-start">
-                                <div
-                                    class="bg-white border text-gray-800 px-4 py-2 rounded-lg rounded-tl-none max-w-[90%] shadow-sm">
-                                    <div class="flex items-center mb-1">
-                                        <span
-                                            class="text-xs font-bold text-purple-600 bg-purple-100 px-1.5 py-0.5 rounded mr-2">小设
-                                            AI</span>
-                                    </div>
-                                    <p class="text-sm whitespace-pre-wrap">{{ msg.content }}</p>
-                                    <span class="text-[10px] text-gray-400 mt-1 block">{{ msg.created_at }}</span>
-                                </div>
-                            </div>
+                        <div class="flex items-center">
+                            <span class="w-2 h-2 rounded-full bg-red-500 mr-2"></span>
+                            <span class="text-gray-500">待办:</span>
+                            <span class="ml-1 font-bold text-red-600">{{ stats.pending_escalations || 0 }}</span>
+                        </div>
+                        <div class="flex items-center">
+                            <span class="w-2 h-2 rounded-full bg-green-500 mr-2"></span>
+                            <span class="text-gray-500">生产:</span>
+                            <span class="ml-1 font-bold">{{ stats.active_orders || 0 }}</span>
                         </div>
                     </div>
                 </div>
-            </div>
+            </header>
 
-            <!-- Middle & Right Column: Escalations & Pipeline -->
-            <div class="lg:col-span-2 flex flex-col gap-6">
+            <div class="flex-1 overflow-y-auto p-8 scrollbar-hide">
 
-                <!-- Pending Escalations (Requires Human) -->
-                <div class="bg-white rounded-xl shadow p-5 border-l-4 border-red-500">
-                    <h2 class="text-xl font-semibold mb-4 flex items-center text-red-700">
-                        ⚠️ 待人工介入 (转人工请求)
-                    </h2>
-                    <div class="overflow-x-auto">
-                        <table class="min-w-full divide-y divide-gray-200">
-                            <thead class="bg-gray-50">
-                                <tr>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">买家ID
-                                    </th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">原因标签
-                                    </th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase w-1/2">
-                                        触发消息</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">操作</th>
-                                </tr>
-                            </thead>
-                            <tbody class="bg-white divide-y divide-gray-200">
-                                <tr v-for="esc in escalations" :key="esc.id" class="hover:bg-gray-50">
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{{
-                                        esc.user_id }}</td>
-                                    <td class="px-6 py-4 whitespace-nowrap">
+                <!-- Panel: 监控大屏 (Monitor) -->
+                <div v-show="activePanel === 'monitor'" class="grid grid-cols-12 gap-6 h-full min-h-[600px]">
+                    <!-- Left: Session List -->
+                    <div class="col-span-12 lg:col-span-4 flex flex-col h-full">
+                        <div
+                            class="bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col h-full overflow-hidden">
+                            <div class="p-5 border-b flex justify-between items-center">
+                                <h2 class="font-bold text-gray-800 flex items-center">
+                                    <span class="w-2 h-4 bg-blue-600 rounded-sm mr-2"></span>
+                                    实时对话队列
+                                </h2>
+                                <span class="text-xs bg-gray-100 text-gray-500 px-2 py-1 rounded-full">{{
+                                    sessions.length }} 活跃</span>
+                            </div>
+                            <div class="flex-1 overflow-y-auto p-3 space-y-2 chat-scroll">
+                                <div v-for="session in sessions" :key="session.id" @click="viewChat(session.user_id)"
+                                    :class="['p-4 rounded-xl cursor-pointer transition-all border', 
+                                              selectedUser === session.user_id ? 'bg-blue-50 border-blue-200 ring-2 ring-blue-500/10' : 'bg-white border-transparent hover:border-gray-200 hover:bg-gray-50']">
+                                    <div class="flex justify-between items-start mb-2">
+                                        <span class="font-bold text-gray-700 truncate w-2/3 text-sm">{{ session.user_id
+                                            }}</span>
                                         <span
-                                            class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">
-                                            {{ esc.reason_label }}
+                                            class="text-[10px] uppercase font-bold text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">{{
+                                            session.platform }}</span>
+                                    </div>
+                                    <div class="flex justify-between items-center text-xs text-gray-500">
+                                        <span class="flex items-center">
+                                            <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor"
+                                                viewBox="0 0 24 24">
+                                                <path
+                                                    d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                                            </svg>
+                                            {{ session.message_count }} 条
                                         </span>
-                                    </td>
-                                    <td class="px-6 py-4 text-sm text-gray-500 truncate max-w-xs"
-                                        :title="esc.trigger_message">
-                                        {{ esc.trigger_message }}
-                                    </td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                                        <button @click="resolveEscalation(esc.id)"
-                                            class="text-white bg-red-600 hover:bg-red-700 px-3 py-1 rounded text-xs transition-colors">
-                                            标记处理完成
-                                        </button>
-                                    </td>
-                                </tr>
-                                <tr v-if="escalations.length === 0">
-                                    <td colspan="4" class="px-6 py-8 text-center text-gray-500">🎉 当前无待处理的人工工单</td>
-                                </tr>
-                            </tbody>
-                        </table>
+                                        <span>{{ session.updated_at.split(' ')[1] }}</span>
+                                    </div>
+                                </div>
+                                <div v-if="sessions.length === 0"
+                                    class="flex flex-col items-center justify-center h-40 text-gray-400">
+                                    <p>📭 暂无活跃对话</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right: Chat Window -->
+                    <div class="col-span-12 lg:col-span-8 h-full flex flex-col">
+                        <div
+                            class="bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col h-full overflow-hidden">
+                            <!-- Chat Header -->
+                            <div v-if="selectedUser" class="p-5 border-b bg-gray-50 flex items-center justify-between">
+                                <div class="flex items-center space-x-3">
+                                    <div
+                                        class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold">
+                                        {{ selectedUser.slice(0, 1) }}
+                                    </div>
+                                    <div>
+                                        <p class="font-bold text-gray-800">{{ selectedUser }}</p>
+                                        <p class="text-xs text-green-500 flex items-center">
+                                            <span class="w-1.5 h-1.5 bg-green-500 rounded-full mr-1"></span> 会话在线
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div v-else class="p-5 border-b bg-gray-50">
+                                <p class="text-gray-400 font-medium">请选择左侧会话查看记录</p>
+                            </div>
+
+                            <!-- Messages Area -->
+                            <div class="flex-1 overflow-y-auto p-6 space-y-6 chat-scroll" id="chat-window">
+                                <div v-if="!selectedUser"
+                                    class="flex flex-col items-center justify-center h-full text-gray-300">
+                                    <svg class="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                                            d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                                    </svg>
+                                    <p>未选中用户</p>
+                                </div>
+
+                                <template v-for="(msg, index) in currentChat" :key="index">
+                                    <!-- User Message -->
+                                    <div v-if="msg.role === 'user'" class="flex justify-end">
+                                        <div class="max-w-[75%]">
+                                            <div
+                                                class="bg-blue-600 text-white px-5 py-3 rounded-2xl rounded-tr-none shadow-lg shadow-blue-500/10">
+                                                <p class="text-[14.5px] leading-relaxed">{{ msg.content }}</p>
+                                            </div>
+                                            <p class="text-[10px] text-gray-400 mt-2 text-right">{{ msg.created_at }}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <!-- AI Message -->
+                                    <div v-else class="flex justify-start">
+                                        <div class="max-w-[85%]">
+                                            <div
+                                                class="bg-gray-50 border border-gray-100 text-gray-800 px-5 py-3 rounded-2xl rounded-tl-none">
+                                                <div class="flex items-center mb-1.5">
+                                                    <span
+                                                        class="text-[10px] font-bold text-purple-600 bg-purple-100 px-1.5 py-0.5 rounded uppercase tracking-wider">PDD
+                                                        AI Service</span>
+                                                </div>
+                                                <p class="text-[14.5px] leading-relaxed whitespace-pre-wrap">{{
+                                                    msg.content }}</p>
+                                            </div>
+                                            <p class="text-[10px] text-gray-400 mt-2">{{ msg.created_at }}</p>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
-                <!-- PPT Production Pipeline -->
-                <div class="bg-white rounded-xl shadow flex-1 flex flex-col">
-                    <div class="p-5 border-b flex justify-between items-center">
-                        <h2 class="text-xl font-semibold flex items-center">
-                            🏭 自动化生产流水线
-                        </h2>
-                        <span
-                            class="text-xs bg-indigo-100 text-indigo-800 px-2 py-1 rounded-full font-semibold">NotebookLM
-                            引擎</span>
+                <!-- Panel: 人工干预池 (Interventions) -->
+                <div v-show="activePanel === 'interventions'" class="space-y-6">
+                    <div class="bg-white rounded-2xl shadow-sm border-l-4 border-red-500 overflow-hidden">
+                        <div class="p-6">
+                            <h2 class="text-xl font-bold text-gray-800 mb-6 flex items-center">
+                                <svg class="w-6 h-6 text-red-500 mr-2" fill="none" stroke="currentColor"
+                                    viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                </svg>
+                                待人工处理工单 (转人工请求)
+                            </h2>
+                            <div class="overflow-x-auto rounded-xl border border-gray-100">
+                                <table class="min-w-full divide-y divide-gray-200">
+                                    <thead class="bg-gray-50">
+                                        <tr>
+                                            <th
+                                                class="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-widest">
+                                                买家ID</th>
+                                            <th
+                                                class="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-widest">
+                                                原因</th>
+                                            <th
+                                                class="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-widest">
+                                                异常详情</th>
+                                            <th
+                                                class="px-6 py-4 text-right text-xs font-bold text-gray-500 uppercase tracking-widest">
+                                                快速操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="bg-white divide-y divide-gray-100">
+                                        <tr v-for="esc in escalations" :key="esc.id"
+                                            class="hover:bg-red-50/30 transition-colors">
+                                            <td class="px-6 py-4 whitespace-nowrap font-bold text-gray-700">{{
+                                                esc.user_id }}</td>
+                                            <td class="px-6 py-4 whitespace-nowrap">
+                                                <span
+                                                    class="px-2.5 py-1 text-[11px] font-bold rounded-full bg-red-100 text-red-700 uppercase">
+                                                    {{ esc.reason_label }}
+                                                </span>
+                                            </td>
+                                            <td class="px-6 py-4 text-sm text-gray-600 truncate max-w-xs"
+                                                :title="esc.trigger_message">
+                                                {{ esc.trigger_message }}
+                                            </td>
+                                            <td class="px-6 py-4 text-right">
+                                                <button @click="resolveEscalation(esc.id)"
+                                                    class="bg-red-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-red-700 shadow-lg shadow-red-200">
+                                                    已处理完毕
+                                                </button>
+                                            </td>
+                                        </tr>
+                                        <tr v-if="escalations.length === 0">
+                                            <td colspan="4" class="px-6 py-12 text-center">
+                                                <div class="flex flex-col items-center">
+                                                    <span class="text-4xl mb-4">🎉</span>
+                                                    <p class="text-gray-500 font-bold">暂无待人工介入的请求</p>
+                                                    <p class="text-gray-400 text-xs mt-1">系统正以 100% 自动化率运行中</p>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
-                    <div class="p-5 flex-1 overflow-y-auto">
-                        <div class="grid grid-cols-1 gap-4">
-                            <div v-for="order in orders" :key="order.id"
-                                class="border rounded-lg p-4 flex flex-col md:flex-row justify-between items-start md:items-center bg-gray-50">
+                </div>
 
-                                <!-- Order Info -->
-                                <div class="mb-4 md:mb-0 max-w-md">
-                                    <div class="flex items-center space-x-2 mb-2">
-                                        <span class="font-bold text-gray-800">单号: {{ order.order_sn }}</span>
-                                        <span class="text-xs text-gray-500">买家: {{ order.user_id }}</span>
-                                    </div>
-                                    <div class="text-sm text-gray-600 bg-white p-2 rounded border">
-                                        <pre
-                                            class="whitespace-pre-wrap font-sans text-xs m-0">{{ formatJSON(order.requirement) }}</pre>
-                                    </div>
-                                </div>
-
-                                <!-- Status & Actions -->
-                                <div class="flex flex-col items-end min-w-[200px]">
-
-                                    <!-- Status Badge -->
-                                    <div class="mb-3">
-                                        <span v-if="order.status === 'req_fixed'"
-                                            class="px-3 py-1 bg-yellow-100 text-yellow-800 rounded-full text-xs font-bold">需求已确认</span>
-                                        <span v-else-if="order.status === 'generating'"
-                                            class="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-bold flex items-center">
-                                            <svg class="animate-spin -ml-1 mr-2 h-3 w-3 text-blue-800"
-                                                xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor"
-                                                    stroke-width="4"></circle>
-                                                <path class="opacity-75" fill="currentColor"
-                                                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
-                                                </path>
-                                            </svg>
-                                            生成 PPT 中...
-                                        </span>
-                                        <span v-else-if="order.status === 'processing'"
-                                            class="px-3 py-1 bg-purple-100 text-purple-800 rounded-full text-xs font-bold flex items-center">
-                                            <svg class="animate-spin -ml-1 mr-2 h-3 w-3 text-purple-800"
-                                                xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor"
-                                                    stroke-width="4"></circle>
-                                                <path class="opacity-75" fill="currentColor"
-                                                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
-                                                </path>
-                                            </svg>
-                                            后处理去水印
-                                        </span>
-                                        <span v-else-if="order.status === 'awaiting_review'"
-                                            class="px-3 py-1 bg-orange-100 text-orange-800 rounded-full text-xs font-bold border border-orange-300">
-                                            待人工审核发货
-                                        </span>
-                                        <span v-else-if="order.status === 'shipped'"
-                                            class="px-3 py-1 bg-green-100 text-green-800 rounded-full text-xs font-bold">
-                                            ✅ 已发货
-                                        </span>
+                <!-- Panel: 生产流水线 (Pipeline) -->
+                <div v-show="activePanel === 'pipeline'" class="space-y-6">
+                    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                        <div class="p-6 border-b flex justify-between items-center">
+                            <h2 class="text-xl font-bold text-gray-800 flex items-center">
+                                <svg class="w-6 h-6 text-indigo-500 mr-2" fill="none" stroke="currentColor"
+                                    viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                                </svg>
+                                PPT 自动化生产线
+                            </h2>
+                            <div class="flex items-center space-x-2">
+                                <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                                <span class="text-xs font-bold text-gray-500 uppercase tracking-widest">NotebookLM
+                                    Running</span>
+                            </div>
+                        </div>
+                        <div class="p-6">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div v-for="order in orders" :key="order.id"
+                                    class="p-5 border border-gray-100 rounded-2xl bg-gray-50/50 hover:border-indigo-200 transition-colors">
+                                    <div class="flex justify-between items-start mb-4">
+                                        <div>
+                                            <p
+                                                class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">
+                                                Order SN</p>
+                                            <p class="font-bold text-gray-800">{{ order.order_sn }}</p>
+                                        </div>
+                                        <div
+                                            :class="['px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest', getStatusClass(order.status)]">
+                                            {{ getStatusLabel(order.status) }}
+                                        </div>
                                     </div>
 
-                                    <!-- Action Buttons -->
-                                    <div v-if="order.status === 'awaiting_review'" class="flex space-x-2">
+                                    <div
+                                        class="bg-white p-3 rounded-xl border border-gray-100 mb-4 h-24 overflow-y-auto scrollbar-hide text-[11px] text-gray-500">
+                                        {{ formatJSON(order.requirement) }}
+                                    </div>
+
+                                    <div class="flex justify-between items-center bg-white p-3 rounded-2xl border border-gray-100 shadow-sm"
+                                        v-if="order.status === 'awaiting_review'">
                                         <a :href="order.clean_file_url" target="_blank"
-                                            class="text-xs bg-white border border-gray-300 text-gray-700 px-3 py-1.5 rounded hover:bg-gray-50">
-                                            预览文件
-                                        </a>
+                                            class="text-xs font-bold text-indigo-600 px-3">预览成果</a>
                                         <button @click="approveOrder(order.id)"
-                                            class="text-xs bg-green-600 text-white px-3 py-1.5 rounded shadow hover:bg-green-700 font-bold transition-colors">
-                                            一键批准发货
-                                        </button>
+                                            class="bg-indigo-600 text-white px-4 py-2 rounded-xl text-xs font-black shadow-lg shadow-indigo-200">批准发货</button>
                                     </div>
-                                    <div v-if="order.status === 'shipped'" class="text-xs text-gray-400">
-                                        {{ order.clean_file_url }}
+                                    <div v-else-if="order.status === 'shipped'"
+                                        class="flex items-center text-green-600 text-xs font-bold px-1">
+                                        <svg class="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fill-rule="evenodd"
+                                                d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                                                clip-rule="evenodd" />
+                                        </svg>
+                                        已成功交付 ({{ order.created_at.split(' ')[0] }})
                                     </div>
-
                                 </div>
                             </div>
-
-                            <div v-if="orders.length === 0"
-                                class="text-center py-12 border-2 border-dashed rounded-xl border-gray-200">
-                                <p class="text-gray-400 text-lg">📭 当前生产管线空闲中</p>
-                                <p class="text-gray-400 text-sm mt-1">AI 正在努力接客，稍后会把确定的需求丢到这里</p>
+                            <div v-if="orders.length === 0" class="text-center py-16">
+                                <p class="text-gray-400">目前暂无正在生产的订单</p>
                             </div>
-
                         </div>
                     </div>
                 </div>
 
-            </div>
+                <!-- Panel: 知识库管理 (Knowledge) -->
+                <div v-show="activePanel === 'knowledge'" class="space-y-6">
+                    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                        <div class="p-6 border-b flex justify-between items-center">
+                            <h2 class="text-xl font-bold text-gray-800 flex items-center">
+                                <svg class="w-6 h-6 text-blue-600 mr-2" fill="none" stroke="currentColor"
+                                    viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5.1.253v13m0-13c1.168-0.776 2.754-1.253 4.5-1.253s3.332 0.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332 0.477-4.5 1.253" />
+                                </svg>
+                                专属知识库管理
+                            </h2>
+                            <button @click="showAddKnowledge = true"
+                                class="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-blue-200">+
+                                新增知识片段</button>
+                        </div>
 
-            <!-- Full Width Column: Knowledge Base -->
-            <div class="lg:col-span-3 mt-4">
-                <div class="bg-white rounded-xl shadow flex flex-col h-auto">
-                    <div class="p-5 border-b flex justify-between items-center bg-gray-50 rounded-t-xl">
-                        <h2 class="text-xl font-semibold flex items-center text-blue-800">
-                            🧠 专属领域知识库 (RAG)
-                        </h2>
-                        <button @click="showAddKnowledge = true"
-                            class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm transition-colors shadow">
-                            + 新增知识
-                        </button>
-                    </div>
-
-                    <!-- Add Knowledge Form -->
-                    <div v-if="showAddKnowledge" class="p-5 border-b bg-blue-50">
-                        <div class="flex flex-col gap-3">
-                            <textarea v-model="newKnowledgeContent" rows="3"
-                                class="w-full border rounded p-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none"
-                                placeholder="输入知识片段，例如：店铺的退换货政策是收货后7天内可退，需保持包装完好..."></textarea>
-                            <div class="flex justify-end space-x-2">
+                        <!-- Add Knowledge Modal-like section -->
+                        <div v-if="showAddKnowledge"
+                            class="p-6 bg-blue-50 border-b animate-in fade-in slide-in-from-top-4">
+                            <h3 class="font-bold text-blue-800 mb-4">入库新知识 (Markdown 格式)</h3>
+                            <textarea v-model="newKnowledgeContent" rows="5"
+                                class="w-full border-2 border-blue-200 rounded-xl p-4 text-sm focus:border-blue-500 outline-none transition-all"
+                                placeholder="例如：### 退换货政策\n本店支持7天无理由退货..."></textarea>
+                            <div class="flex justify-end space-x-3 mt-4">
                                 <button @click="showAddKnowledge = false"
-                                    class="px-4 py-2 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300">取消</button>
+                                    class="px-5 py-2.5 rounded-xl text-sm font-bold text-gray-500 hover:bg-white transition-colors">取消</button>
                                 <button @click="addKnowledge"
-                                    class="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 font-medium">确认提交</button>
+                                    class="px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold">确认为 AI
+                                    入库</button>
+                            </div>
+                        </div>
+
+                        <div class="p-6 overflow-x-auto">
+                            <table class="min-w-full divide-y divide-gray-100">
+                                <thead class="bg-gray-50">
+                                    <tr>
+                                        <th
+                                            class="px-6 py-4 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest w-32">
+                                            Index ID</th>
+                                        <th
+                                            class="px-6 py-4 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                                            知识片段内容</th>
+                                        <th
+                                            class="px-6 py-4 text-right text-[10px] font-bold text-gray-400 uppercase tracking-widest w-24">
+                                            管理</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-50">
+                                    <tr v-for="km in knowledgeBase" :key="km.id" class="hover:bg-gray-50/50">
+                                        <td class="px-6 py-4 text-[10px] text-gray-400 font-mono">{{ km.id.slice(0, 8)
+                                            }}...</td>
+                                        <td class="px-6 py-4">
+                                            <p class="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{{
+                                                km.content }}</p>
+                                        </td>
+                                        <td class="px-6 py-4 text-right">
+                                            <button @click="deleteKnowledge(km.id)"
+                                                class="text-red-500 hover:text-red-700 font-bold text-xs uppercase tracking-wider">下架</button>
+                                        </td>
+                                    </tr>
+                                    <tr v-if="knowledgeBase.length === 0">
+                                        <td colspan="3" class="px-6 py-12 text-center text-gray-400">知识库为空，请先添加商品政策</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Panel: 系统配置 (Settings) -->
+                <div v-show="activePanel === 'settings'" class="max-w-4xl mx-auto py-10">
+                    <div class="bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden">
+                        <div class="p-10">
+                            <h2 class="text-2xl font-black text-gray-800 mb-8">系统控制中心</h2>
+                            <div class="space-y-8">
+                                <div class="flex items-center justify-between p-6 bg-gray-50 rounded-2xl">
+                                    <div>
+                                        <p class="font-bold text-gray-800">服务状态</p>
+                                        <p class="text-sm text-gray-500">当前 Uvicorn 节点运行正常</p>
+                                    </div>
+                                    <div class="px-4 py-2 bg-green-100 text-green-700 rounded-xl font-bold text-sm">
+                                        ONLINE</div>
+                                </div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div class="p-6 border border-gray-100 rounded-2xl">
+                                        <p class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">LLM
+                                            Engine</p>
+                                        <p class="font-bold text-gray-800">GLM-4 Flash</p>
+                                    </div>
+                                    <div class="p-6 border border-gray-100 rounded-2xl">
+                                        <p class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">RAG
+                                            Threshold</p>
+                                        <p class="font-bold text-gray-800">0.3 Relevance</p>
+                                    </div>
+                                </div>
+                                <div class="pt-6 border-t border-gray-100">
+                                    <button
+                                        class="w-full py-4 bg-gray-800 text-white rounded-2xl font-bold hover:bg-black transition-all">
+                                        导出系统运行日志 (Full JSON)
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
-
-                    <!-- Knowledge List -->
-                    <div class="p-5 overflow-x-auto max-h-96 overflow-y-auto">
-                        <table class="min-w-full divide-y divide-gray-200 table-fixed">
-                            <thead class="bg-gray-50">
-                                <tr>
-                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-32">文档
-                                        ID</th>
-                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">知识内容
-                                    </th>
-                                    <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase w-24">操作
-                                    </th>
-                                </tr>
-                            </thead>
-                            <tbody class="divide-y divide-gray-100">
-                                <tr v-for="km in knowledgeBase" :key="km.id" class="hover:bg-gray-50 transition-colors">
-                                    <td class="px-4 py-3 text-xs text-gray-500 truncate" :title="km.id">{{ km.id }}</td>
-                                    <td class="px-4 py-3 text-sm text-gray-800 break-words whitespace-pre-wrap">{{
-                                        km.content }}</td>
-                                    <td class="px-4 py-3 text-right">
-                                        <button @click="deleteKnowledge(km.id)"
-                                            class="text-red-500 hover:text-red-700 text-sm font-medium">删除</button>
-                                    </td>
-                                </tr>
-                                <tr v-if="knowledgeBase.length === 0">
-                                    <td colspan="3" class="px-4 py-8 text-center text-gray-400">目前知识库为空</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
                 </div>
-            </div>
 
-        </div>
+            </div>
+        </main>
     </div>
 
     <script>
-        const { createApp, ref, onMounted, onUnmounted } = Vue;
+        const { createApp, ref, computed, onMounted, onUnmounted } = Vue;
 
         createApp({
             setup() {
+                const activePanel = ref('monitor');
                 const stats = ref({});
                 const sessions = ref([]);
                 const escalations = ref([]);
@@ -341,114 +501,88 @@
                 const showAddKnowledge = ref(false);
                 const newKnowledgeContent = ref('');
 
+                const navItems = [
+                    { id: 'monitor', name: '监控大屏', icon: '📊' },
+                    { id: 'interventions', name: '人工干预池', icon: '🛡️' },
+                    { id: 'pipeline', name: '生产流水线', icon: '🏭' },
+                    { id: 'knowledge', name: '知识库管理', icon: '🧠' },
+                    { id: 'settings', name: '系统配置', icon: '⚙️' }
+                ];
+
+                const currentPanelName = computed(() => {
+                    return navItems.find(i => i.id === activePanel.value)?.name || '';
+                });
+
                 let pollInterval = null;
 
                 const fetchData = async () => {
                     try {
-                        // Fetch Stats
-                        const resStats = await fetch('/api/dashboard/stats');
+                        const [resStats, resSessions, resEsc, resOrders] = await Promise.all([
+                            fetch('/api/dashboard/stats'),
+                            fetch('/api/dashboard/sessions'),
+                            fetch('/api/dashboard/escalations'),
+                            fetch('/api/dashboard/orders')
+                        ]);
+
                         stats.value = await resStats.json();
-
-                        // Fetch Sessions
-                        const resSessions = await fetch('/api/dashboard/sessions');
                         sessions.value = await resSessions.json();
-
-                        // Fetch Escalations
-                        const resEsc = await fetch('/api/dashboard/escalations');
                         escalations.value = await resEsc.json();
-
-                        // Fetch Orders
-                        const resOrders = await fetch('/api/dashboard/orders');
                         orders.value = await resOrders.json();
 
-                        // Refresh selected chat if any
-                        if (selectedUser.value) {
+                        if (selectedUser.value && activePanel.value === 'monitor') {
                             viewChat(selectedUser.value, false);
                         }
-                        await loadKnowledge();
-                    } catch (e) {
-                        console.error("Fetch error:", e);
-                    }
+
+                        if (activePanel.value === 'knowledge' && knowledgeBase.value.length === 0) {
+                            await loadKnowledge();
+                        }
+                    } catch (e) { console.error("Poll error:", e); }
                 };
 
                 const loadKnowledge = async () => {
-                    try {
-                        const res = await fetch('/api/admin/knowledge');
-                        const result = await res.json();
-                        if (result.status === 'success') {
-                            knowledgeBase.value = result.data;
-                        }
-                    } catch (e) {
-                        console.error("Fetch knowledge error:", e);
-                    }
+                    const res = await fetch('/api/admin/knowledge');
+                    const result = await res.json();
+                    if (result.status === 'success') knowledgeBase.value = result.data;
                 };
 
                 const addKnowledge = async () => {
-                    if (!newKnowledgeContent.value.trim()) {
-                        alert('知识内容不能为空');
-                        return;
-                    }
-                    try {
-                        const res = await fetch('/api/admin/knowledge', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({ content: newKnowledgeContent.value })
-                        });
-                        const result = await res.json();
-                        if (result.status === 'success') {
-                            newKnowledgeContent.value = '';
-                            showAddKnowledge.value = false;
-                            await loadKnowledge();
-                        } else {
-                            alert('添加知识失败: ' + (result.message || '未知错误'));
-                        }
-                    } catch (e) {
-                        console.error("Add knowledge error:", e);
-                        alert('添加知识时发生错误');
-                    }
+                    if (!newKnowledgeContent.value.trim()) return;
+                    await fetch('/api/admin/knowledge', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ content: newKnowledgeContent.value })
+                    });
+                    newKnowledgeContent.value = '';
+                    showAddKnowledge.value = false;
+                    await loadKnowledge();
                 };
 
                 const deleteKnowledge = async (id) => {
-                    if (!confirm("确认删除此知识片段？")) return;
-                    try {
-                        const res = await fetch(`/api/admin/knowledge/${id}`, {
-                            method: 'DELETE'
-                        });
-                        const result = await res.json();
-                        if (result.status === 'success') {
-                            await loadKnowledge();
-                        } else {
-                            alert('删除知识失败: ' + (result.message || '未知错误'));
-                        }
-                    } catch (e) {
-                        console.error("Delete knowledge error:", e);
-                        alert('删除知识时发生错误');
-                    }
+                    if (!confirm("确定移除此知识？AI 将无法再引用它。")) return;
+                    await fetch(`/api/admin/knowledge/${id}`, { method: 'DELETE' });
+                    await loadKnowledge();
                 };
 
                 const viewChat = async (userId, scroll = true) => {
                     selectedUser.value = userId;
                     const res = await fetch(`/api/dashboard/messages/${userId}`);
                     currentChat.value = await res.json();
-
                     if (scroll) {
                         setTimeout(() => {
                             const container = document.getElementById('chat-window');
                             if (container) container.scrollTop = container.scrollHeight;
-                        }, 100);
+                        }, 50);
                     }
                 };
 
                 const resolveEscalation = async (id) => {
-                    if (!confirm("确认已在拼多多后台回复过该客户，并标记为已处理？")) return;
+                    if (!confirm("确认已人工处理并同步至拼多多？")) return;
                     await fetch(`/api/dashboard/escalations/${id}/resolve`, { method: 'POST' });
                     fetchData();
                 };
 
                 const approveOrder = async (id) => {
-                    if (!confirm("确认PPT质量无误，调用拼多多发货接口？")) return;
+                    if (!confirm("确认 PPT 质量正常并批准通过？")) return;
                     await fetch(`/api/dashboard/orders/${id}/approve`, { method: 'POST' });
                     fetchData();
                 };
@@ -456,26 +590,44 @@
                 const formatJSON = (str) => {
                     try {
                         const obj = JSON.parse(str);
-                        return Object.entries(obj).map(([k, v]) => `• ${k}: ${v}`).join('\n');
-                    } catch {
-                        return str;
-                    }
+                        return Object.entries(obj).map(([k, v]) => `${k}: ${v}`).join('\n');
+                    } catch { return str; }
+                };
+
+                const getStatusClass = (status) => {
+                    const map = {
+                        'generating': 'bg-blue-100 text-blue-700',
+                        'processing': 'bg-purple-100 text-purple-700',
+                        'awaiting_review': 'bg-orange-100 text-orange-700',
+                        'shipped': 'bg-green-100 text-green-700',
+                        'req_fixed': 'bg-yellow-100 text-yellow-700'
+                    };
+                    return map[status] || 'bg-gray-100 text-gray-700';
+                };
+
+                const getStatusLabel = (status) => {
+                    const map = {
+                        'generating': 'AI 生成中',
+                        'processing': '后处理',
+                        'awaiting_review': '待审核',
+                        'shipped': '已交付',
+                        'req_fixed': '需求锁死'
+                    };
+                    return map[status] || status;
                 };
 
                 onMounted(() => {
                     fetchData();
-                    // Poll every 3 seconds
                     pollInterval = setInterval(fetchData, 3000);
                 });
 
-                onUnmounted(() => {
-                    clearInterval(pollInterval);
-                });
+                onUnmounted(() => clearInterval(pollInterval));
 
                 return {
-                    stats, sessions, escalations, orders, knowledgeBase,
-                    selectedUser, currentChat, showAddKnowledge, newKnowledgeContent,
-                    viewChat, resolveEscalation, approveOrder, formatJSON, addKnowledge, deleteKnowledge
+                    activePanel, stats, sessions, escalations, orders, knowledgeBase, selectedUser, currentChat,
+                    showAddKnowledge, newKnowledgeContent, navItems, currentPanelName,
+                    viewChat, resolveEscalation, approveOrder, formatJSON, addKnowledge, deleteKnowledge,
+                    getStatusClass, getStatusLabel
                 }
             }
         }).mount('#app');
