@@ -11,16 +11,21 @@ P0-3 修复: save_message_and_upsert_session 合并消息写入与会话 upsert 
            修复原来双重调用导致 message_count 少计一次的 Bug
 P0-5 修复: claim_escalation 使用新增的 claimed_at 字段，不再污染 resolved_at
 """
-from datetime import datetime, date
-from typing import List, Optional
-from sqlalchemy.orm import Session
-from sqlalchemy import func
 
-from src.models.database import Message, Escalation, Session as SessionModel
+from __future__ import annotations
+
+from datetime import date, datetime
+
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from src.api.websocket_manager import manager as ws_manager
+from src.models.database import Escalation, Message
+from src.models.database import Session as SessionModel
 from src.utils.logger import logger
 
-
 # ===== 消息操作 =====
+
 
 def save_message(db: Session, user_id: str, role: str, content: str, platform: str = "test") -> Message:
     """保存一条消息到数据库（不更新 session，单独使用时调用）"""
@@ -68,43 +73,31 @@ def save_message_and_upsert_session(
     return msg
 
 
-def get_messages(db: Session, user_id: str, limit: int = 20) -> List[Message]:
+def get_messages(db: Session, user_id: str, limit: int = 20) -> list[Message]:
     """获取用户的消息历史（按时间升序）"""
-    return (
-        db.query(Message)
-        .filter(Message.user_id == user_id)
-        .order_by(Message.created_at.asc())
-        .limit(limit)
-        .all()
-    )
+    return db.query(Message).filter(Message.user_id == user_id).order_by(Message.created_at.asc()).limit(limit).all()
 
 
-def get_all_sessions_with_latest(db: Session, limit: int = 50) -> List[dict]:
+def get_all_sessions_with_latest(db: Session, limit: int = 50) -> list[dict]:
     """获取所有会话的最新消息摘要，用于管理后台列表"""
-    sessions = (
-        db.query(SessionModel)
-        .order_by(SessionModel.updated_at.desc())
-        .limit(limit)
-        .all()
-    )
+    sessions = db.query(SessionModel).order_by(SessionModel.updated_at.desc()).limit(limit).all()
     result = []
     for s in sessions:
-        last_msg = (
-            db.query(Message)
-            .filter(Message.user_id == s.user_id)
-            .order_by(Message.created_at.desc())
-            .first()
+        last_msg = db.query(Message).filter(Message.user_id == s.user_id).order_by(Message.created_at.desc()).first()
+        result.append(
+            {
+                "user_id": s.user_id,
+                "platform": s.platform,
+                "status": s.status,
+                "message_count": s.message_count,
+                "created_at": s.created_at.strftime("%m-%d %H:%M"),
+                "updated_at": s.updated_at.strftime("%m-%d %H:%M"),
+                "last_message": last_msg.content[:60] + "..."
+                if last_msg and len(last_msg.content) > 60
+                else (last_msg.content if last_msg else ""),
+                "last_role": last_msg.role if last_msg else "",
+            }
         )
-        result.append({
-            "user_id": s.user_id,
-            "platform": s.platform,
-            "status": s.status,
-            "message_count": s.message_count,
-            "created_at": s.created_at.strftime("%m-%d %H:%M"),
-            "updated_at": s.updated_at.strftime("%m-%d %H:%M"),
-            "last_message": last_msg.content[:60] + "..." if last_msg and len(last_msg.content) > 60 else (last_msg.content if last_msg else ""),
-            "last_role": last_msg.role if last_msg else "",
-        })
     return result
 
 
@@ -119,7 +112,7 @@ def get_or_create_session(db: Session, user_id: str, platform: str = "test") -> 
     return session
 
 
-def update_session(db: Session, user_id: str, status: Optional[str] = None):
+def update_session(db: Session, user_id: str, status: str | None = None):
     """更新会话状态（不再自增 message_count，由 save_message_and_upsert_session 负责）"""
     session = db.query(SessionModel).filter(SessionModel.user_id == user_id).first()
     if session:
@@ -130,6 +123,7 @@ def update_session(db: Session, user_id: str, status: Optional[str] = None):
 
 
 # ===== 升级操作 =====
+
 
 def create_escalation(
     db: Session,
@@ -151,15 +145,40 @@ def create_escalation(
     db.commit()
     db.refresh(esc)
     logger.info(f"升级记录已创建 | user_id: {user_id} | reason: {reason}")
+
+    # L2: 实时 WS 广播给后台大屏（仅在 async 上下文中有效，同步调用时静默跳过）
+    import asyncio
+
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(
+            ws_manager.broadcast(
+                {
+                    "type": "new_escalation",
+                    "data": {
+                        "id": esc.id,
+                        "user_id": esc.user_id,
+                        "reason": esc.reason,
+                        "trigger_message": esc.trigger_message[:50] + "..."
+                        if len(esc.trigger_message) > 50
+                        else esc.trigger_message,
+                    },
+                }
+            )
+        )
+    except RuntimeError:
+        # 无 running event loop（单元测试/同步 worker 场景），跳过广播
+        pass
+
     return esc
 
 
 def get_escalations(
     db: Session,
-    status: Optional[str] = None,
+    status: str | None = None,
     limit: int = 50,
-    reason: Optional[str] = None,
-) -> List[Escalation]:
+    reason: str | None = None,
+) -> list[Escalation]:
     """获取升级记录列表（可按状态/原因过滤）"""
     q = db.query(Escalation)
     if status:
@@ -169,7 +188,7 @@ def get_escalations(
     return q.order_by(Escalation.created_at.desc()).limit(limit).all()
 
 
-def get_escalation_by_id(db: Session, escalation_id: int) -> Optional[Escalation]:
+def get_escalation_by_id(db: Session, escalation_id: int) -> Escalation | None:
     """按 ID 获取升级记录"""
     return db.query(Escalation).filter(Escalation.id == escalation_id).first()
 
@@ -178,7 +197,7 @@ def claim_escalation(
     db: Session,
     escalation_id: int,
     operator_name: str = "人工客服",
-) -> Optional[Escalation]:
+) -> Escalation | None:
     """
     接单：将升级记录从 pending → claimed。
     P0-5: 使用独立的 claimed_at 字段记录接单时间，不再污染 resolved_at。
@@ -199,7 +218,7 @@ def resolve_escalation(
     db: Session,
     escalation_id: int,
     operator_note: str = "",
-) -> Optional[Escalation]:
+) -> Escalation | None:
     """标记升级为已处理（resolved），可从 pending 或 claimed 状态流转"""
     esc = db.query(Escalation).filter(Escalation.id == escalation_id).first()
     if esc and esc.status in ("pending", "claimed"):
@@ -220,6 +239,7 @@ def resolve_escalation(
 def get_stats(db: Session) -> dict:
     """获取仪表盘统计数据，P1-4: 新增今日新增会话数与消息数"""
     from src.core.rag_engine import get_rag_engine
+
     today = date.today()
 
     total_sessions = db.query(SessionModel).count()
@@ -231,12 +251,8 @@ def get_stats(db: Session) -> dict:
     total_messages = db.query(Message).count()
 
     # P1-4: 今日新增数据
-    today_sessions = db.query(SessionModel).filter(
-        func.date(SessionModel.created_at) == today
-    ).count()
-    today_messages = db.query(Message).filter(
-        func.date(Message.created_at) == today
-    ).count()
+    today_sessions = db.query(SessionModel).filter(func.date(SessionModel.created_at) == today).count()
+    today_messages = db.query(Message).filter(func.date(Message.created_at) == today).count()
 
     rag = get_rag_engine()
     return {

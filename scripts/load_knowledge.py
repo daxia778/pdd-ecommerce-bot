@@ -5,11 +5,10 @@
 运行方式（首次初始化或更新知识库时）：
     python scripts/load_knowledge.py
 """
-import asyncio
+
 import os
 import sys
 import time
-from typing import List, Tuple
 
 # 添加项目根目录
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -32,6 +31,7 @@ EMBEDDING_MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
 def load_embedding_model():
     """加载本地 Embedding 模型"""
     from sentence_transformers import SentenceTransformer
+
     logger.info(f"加载本地 Embedding 模型: {EMBEDDING_MODEL_NAME}")
     logger.info("（首次运行会自动下载 ~120MB 模型文件，请稍候...）")
     model = SentenceTransformer(EMBEDDING_MODEL_NAME)
@@ -39,13 +39,32 @@ def load_embedding_model():
     return model
 
 
-def get_local_embedding(model, text: str) -> List[float]:
+def get_local_embedding(model, text: str) -> list[float]:
     """将文本转为向量（本地，无限速）"""
     embedding = model.encode(text[:512], show_progress_bar=False)
     return embedding.tolist()
 
 
-def chunk_markdown(content: str, source_file: str) -> List[Tuple[str, dict]]:
+def _sliding_window_split(text: str, meta: dict, max_chars: int = 300, step: int = 100) -> list[tuple[str, dict]]:
+    """P3-4: 滑动窗口切分超长段落"""
+    if len(text) <= max_chars + 100:  # 留 100 字的宽限，不用强行切
+        return [(text, meta)]
+
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = min(start + max_chars, len(text))
+        chunk_text = text[start:end]
+        # 补充切分标记到 meta
+        chunk_meta = meta.copy()
+        if start > 0 or end < len(text):
+            chunk_meta["is_split"] = True
+        chunks.append((chunk_text, chunk_meta))
+        start += step
+    return chunks
+
+
+def chunk_markdown(content: str, source_file: str) -> list[tuple[str, dict]]:
     """
     将 Markdown 文件按"## 二级标题"切分为知识片段（Chunk）。
     每个 Chunk 是一个完整的知识点，提升检索精度。
@@ -61,7 +80,8 @@ def chunk_markdown(content: str, source_file: str) -> List[Tuple[str, dict]]:
             if current_lines:
                 text = "\n".join(current_lines).strip()
                 if len(text) > 30:
-                    chunks.append((text, {"source": source_file, "section": current_section, "h1": current_h1}))
+                    base_meta = {"source": source_file, "section": current_section, "h1": current_h1}
+                    chunks.extend(_sliding_window_split(text, base_meta))
             current_h1 = line.lstrip("# ").strip()
             current_lines = [line]
             current_section = current_h1
@@ -69,7 +89,8 @@ def chunk_markdown(content: str, source_file: str) -> List[Tuple[str, dict]]:
             if current_lines:
                 text = "\n".join(current_lines).strip()
                 if len(text) > 30:
-                    chunks.append((text, {"source": source_file, "section": current_section, "h1": current_h1}))
+                    base_meta = {"source": source_file, "section": current_section, "h1": current_h1}
+                    chunks.extend(_sliding_window_split(text, base_meta))
             current_section = line.lstrip("# ").strip()
             current_lines = [line]
         else:
@@ -78,15 +99,21 @@ def chunk_markdown(content: str, source_file: str) -> List[Tuple[str, dict]]:
     if current_lines:
         text = "\n".join(current_lines).strip()
         if len(text) > 30:
-            chunks.append((text, {"source": source_file, "section": current_section, "h1": current_h1}))
+            base_meta = {"source": source_file, "section": current_section, "h1": current_h1}
+            chunks.extend(_sliding_window_split(text, base_meta))
 
     return chunks
 
 
-def load_all_knowledge():
+def load_all_knowledge(dry_run: bool = False):
     """扫描知识库目录，向量化所有 .md 文件并存入 ChromaDB"""
     # 加载本地 Embedding 模型
     model = load_embedding_model()
+
+    # 导入统一的集合名称，确保与 RAGEngine 保持一致
+    from src.core.rag_engine import COLLECTION_NAME
+
+    logger.info(f"使用集合名称: {COLLECTION_NAME}")
 
     # 初始化 ChromaDB
     db_path = os.path.abspath(settings.chroma_db_dir)
@@ -97,16 +124,16 @@ def load_all_knowledge():
         settings=ChromaSettings(anonymized_telemetry=False),
     )
 
-    # 清空并重建集合
+    # 清空并重建集合（幂等操作）
     try:
-        client.delete_collection("ppt_shop_knowledge")
-        logger.info("已清空旧知识库，重新入库...")
+        client.delete_collection(COLLECTION_NAME)
+        logger.info(f"已清空旧知识库集合 [{COLLECTION_NAME}]，开始重新入库...")
     except Exception:
         pass
 
     collection = client.create_collection(
-        name="ppt_shop_knowledge",
-        metadata={"description": "PPT设计店铺知识库"},
+        name=COLLECTION_NAME,
+        metadata={"description": "PDD店铺知识库"},
     )
 
     # 扫描知识库目录
@@ -124,7 +151,7 @@ def load_all_knowledge():
 
     for filename in sorted(md_files):
         filepath = os.path.join(KNOWLEDGE_DIR, filename)
-        with open(filepath, "r", encoding="utf-8") as f:
+        with open(filepath, encoding="utf-8") as f:
             content = f.read()
 
         chunks = chunk_markdown(content, filename)
@@ -146,17 +173,19 @@ def load_all_knowledge():
             logger.debug(f"  向量化: {doc_id} | {meta['section'][:40]}")
 
         # 批量存入 ChromaDB
-        if ids:
+        if ids and not dry_run:
             collection.add(ids=ids, embeddings=embeddings, documents=documents, metadatas=metadatas)
             logger.info(f"  ✅ {len(ids)} 个片段已存入 ChromaDB")
+        elif dry_run:
+            logger.info(f"  👀 [Dry Run] {len(ids)} 个片段准备就绪，跳过写入数据库")
 
     elapsed = time.time() - t0
-    logger.info(f"\n{'='*50}")
-    logger.info(f"🎉 知识库入库完成！")
+    logger.info(f"\n{'=' * 50}")
+    logger.info("🎉 知识库入库完成！")
     logger.info(f"   文件数: {len(md_files)} | 片段数: {total_chunks} | 耗时: {elapsed:.1f}s")
     logger.info(f"   数据库路径: {db_path}")
     logger.info(f"   ChromaDB 总记录: {collection.count()}")
-    logger.info(f"{'='*50}")
+    logger.info(f"{'=' * 50}")
 
     # 快速检索验证
     print("\n🔍 快速检索验证...")
@@ -170,4 +199,7 @@ def load_all_knowledge():
 
 
 if __name__ == "__main__":
-    load_all_knowledge()
+    is_dry_run = "--dry-run" in sys.argv
+    if is_dry_run:
+        logger.info("=== 启动 Dry Run 模式 (不写入数据库) ===")
+    load_all_knowledge(dry_run=is_dry_run)
