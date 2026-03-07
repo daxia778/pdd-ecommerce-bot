@@ -238,6 +238,17 @@ class WeComClient:
             if chat_id:
                 await self.send_group_message(chat_id, notify_content)
 
+        # Step 4: 为设计师（默认群主/第一接收人）单独私发一份“一键出图 Prompt”
+        designer_prompt = (
+            f"🎯 专属出图提示词 (请直接复制给 AI 助手): \n\n"
+            f"请帮我制作一份【{style}】风格的PPT，总页数约为【{pages}】页。\n"
+            f"大纲与主题：{topic}。\n"
+            f"客户特别备注要求：{details}。\n"
+            f"要求逻辑清晰，大纲层次分明，版面现代简洁，适合{order_type}的应用场景。\n"
+            f"请先给我输出完整的 Markdown 格式文字大纲。"
+        )
+        await self.send_text_message([target_ids[0]], designer_prompt)
+
         return {"notified": notified, "chat_id": chat_id}
 
 
