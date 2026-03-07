@@ -1,0 +1,55 @@
+# Docker 构建忽略文件 — 减小构建上下文
+# 越精确越好，直接影响构建速度
+
+# 版本控制
+.git
+.gitignore
+
+# Python 缓存
+__pycache__
+*.pyc
+*.pyo
+.mypy_cache
+.ruff_cache
+.pytest_cache
+*.egg-info
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 前端源码（容器不需要，只挂载 dist）
+frontend/node_modules/
+frontend/.eslintrc.cjs
+frontend/.prettierrc
+
+# 数据目录（通过 volume 挂载）
+data/
+logs/
+
+# Docker 自身
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# 文档和配置
+docs/
+*.md
+!README.md
+.pre-commit-config.yaml
+.github/
+
+# OS 文件
+.DS_Store
+Thumbs.db
+
+# 测试（生产镜像不需要）
+tests/
+pytest.ini
