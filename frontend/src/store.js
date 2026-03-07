@@ -28,6 +28,7 @@ export const store = reactive({
     // ===== 连接 =====
     ws: null,
     wsRetryTimer: null,
+    _wsRetryCount: 0,       // P1-3: 退避计数器，重连成功后归零
     pollInterval: null,
 
     // ========== Auth ==========
@@ -255,6 +256,8 @@ export const store = reactive({
 
             this.ws.onopen = () => {
                 console.log('✅ WebSocket 已连接');
+                // P1-3: 重连成功，清零退避计数器
+                this._wsRetryCount = 0;
                 if (this.wsRetryTimer) {
                     clearTimeout(this.wsRetryTimer);
                     this.wsRetryTimer = null;
@@ -275,8 +278,14 @@ export const store = reactive({
 
             this.ws.onclose = () => {
                 if (this.wsHeartbeat) clearInterval(this.wsHeartbeat);
-                console.warn('⚠️ WebSocket 断开，5s 后重试...');
-                this.wsRetryTimer = setTimeout(() => this._connectWS(wsUrl), 5000);
+                // P1-3: 指数退避 + Jitter，防止服务恢复时所有客户端同时重连形成雪崩
+                // delay = min(2^attempt × 1000 + 随机抖动[0~1000ms], 30000ms)
+                const attempt = this._wsRetryCount++;
+                const baseDelay = Math.min(Math.pow(2, attempt) * 1000, 30000);
+                const jitter = Math.random() * 1000;
+                const delay = Math.floor(baseDelay + jitter);
+                console.warn(`⚠️ WebSocket 断开，${(delay / 1000).toFixed(1)}s 后重试（第 ${attempt + 1} 次）...`);
+                this.wsRetryTimer = setTimeout(() => this._connectWS(wsUrl), delay);
             };
 
             this.ws.onerror = () => {

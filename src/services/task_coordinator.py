@@ -44,10 +44,20 @@ def _get_queue():
 # ===== 核心流水线逻辑 =====
 
 
+# P1-2: Playwright 任务全局超时（防止 NotebookLM 卡死导致 worker 永久挂起）
+# 分别为「生成PPT」和「去水印」两步配置独立超时，方便后续按需调整
+PIPELINE_GENERATE_TIMEOUT_S: int = 480  # 生成步骤最多 8 分钟
+PIPELINE_WATERMARK_TIMEOUT_S: int = 120  # 去水印最多 2 分钟
+
+
 async def _async_run_production_pipeline(order_sn: str):
     """
     后台生产流水线核心异步逻辑。
     NotebookLM Playwright 自动化 → 失败降级到 python-pptx 本地生成
+
+    P1-2: 每个 Playwright 步骤均受 asyncio.wait_for 限制最大执行时长，
+          超时后抛出 TimeoutError，由 except 块将订单标记为 failed，
+          运营人员可从看板重新触发，防止僵尸 Task 永久占用进程资源。
     """
     db = SessionLocal()
     order = None
@@ -67,12 +77,21 @@ async def _async_run_production_pipeline(order_sn: str):
 
         from src.services.notebooklm_client import notebooklm_client
 
-        file_url = await notebooklm_client.generate_ppt(
-            topic=req.get("topic", "未命名主题"),
-            pages=req.get("pages", 10),
-            style=req.get("style", "商务"),
-            requirements=req.get("details", ""),
-        )
+        try:
+            # P1-2: 限制 Playwright 最大执行时间，超时则抛 asyncio.TimeoutError
+            file_url = await asyncio.wait_for(
+                notebooklm_client.generate_ppt(
+                    topic=req.get("topic", "未命名主题"),
+                    pages=req.get("pages", 10),
+                    style=req.get("style", "商务"),
+                    requirements=req.get("details", ""),
+                ),
+                timeout=PIPELINE_GENERATE_TIMEOUT_S,
+            )
+        except asyncio.TimeoutError as err:
+            raise TimeoutError(
+                f"NotebookLM 生成步骤超时（>{PIPELINE_GENERATE_TIMEOUT_S}s），可能是网络或 Google 服务异常"
+            ) from err
         order.file_url = file_url
         db.commit()
 
@@ -80,7 +99,14 @@ async def _async_run_production_pipeline(order_sn: str):
         order.status = "processing"
         db.commit()
 
-        clean_url = await notebooklm_client.remove_watermark(file_url)
+        try:
+            # P1-2: 去水印步骤独立超时
+            clean_url = await asyncio.wait_for(
+                notebooklm_client.remove_watermark(file_url),
+                timeout=PIPELINE_WATERMARK_TIMEOUT_S,
+            )
+        except asyncio.TimeoutError as err:
+            raise TimeoutError(f"去水印步骤超时（>{PIPELINE_WATERMARK_TIMEOUT_S}s），跳过去水印，使用原文件") from err
         order.clean_file_url = clean_url
 
         # --- Step 3: 进入待审核状态 ---
