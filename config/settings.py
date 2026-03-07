@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     pdd_app_key: str = ""
     pdd_app_secret: str = ""
     pdd_access_token: str = ""
+    # Webhook HMAC 签名密钥（空 = 跳过签名校验）
+    pdd_webhook_secret: str = ""
 
     # ===== 数据库 =====
     db_url: str = "sqlite:///./data/sqlite/pdd_ecommerce.db"
