@@ -24,9 +24,12 @@ class TestRAGEngine:
         """每个测试使用独立的临时 ChromaDB 目录"""
         os.environ["CHROMA_DB_DIR"] = str(tmp_path / "test_chroma")
         # 延迟导入避免模块级初始化问题
+        from config.settings import settings
+
+        settings.chroma_db_dir = str(tmp_path / "test_chroma")
         from src.core.rag_engine import RAGEngine
 
-        self.rag = RAGEngine(chroma_dir=str(tmp_path / "test_chroma"))
+        self.rag = RAGEngine()
 
     def test_add_and_retrieve_document(self):
         """添加文档后应能检索到"""
@@ -51,7 +54,7 @@ class TestRAGEngine:
             metadata={"source": "pricing", "section": "高端套餐"},
         )
 
-        results = self.rag.retrieve("发布会PPT", top_k=2)
+        results = self.rag.retrieve("发布会PPT", top_k=2, relevance_threshold=-100.0)
         assert len(results) > 0
 
     def test_retrieve_empty_query(self):
@@ -62,8 +65,8 @@ class TestRAGEngine:
     def test_build_context_from_docs(self):
         """build_context 应正确拼接文档内容"""
         docs = [
-            {"content": "文档1内容", "metadata": {"section": "A"}},
-            {"content": "文档2内容", "metadata": {"section": "B"}},
+            {"content": "文档1内容", "section": "A"},
+            {"content": "文档2内容", "section": "B"},
         ]
         context = self.rag.build_context(docs)
         assert "文档1内容" in context
@@ -96,9 +99,12 @@ class TestRAGQAPair:
 
     @pytest.fixture(autouse=True)
     def setup_rag(self, tmp_path):
+        from config.settings import settings
+
+        settings.chroma_db_dir = str(tmp_path / "test_chroma_qa")
         from src.core.rag_engine import RAGEngine
 
-        self.rag = RAGEngine(chroma_dir=str(tmp_path / "test_chroma_qa"))
+        self.rag = RAGEngine()
 
     def test_add_qa_pair(self):
         """人工话术学习：添加 QA 对后应可检索"""

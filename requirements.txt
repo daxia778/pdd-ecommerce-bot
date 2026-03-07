@@ -9,6 +9,9 @@ litellm==1.48.7
 pydantic-settings==2.2.1
 python-dotenv==1.0.1
 
+# 缓存工具（TTLCache - P0/P1 防缓存雪崩）
+cachetools>=5.3.0
+
 # 向量数据库 (Phase 2)
 chromadb==0.5.15
 
