@@ -6,12 +6,17 @@ LLM 推理: ZhipuAI（仅用于聊天，不用于 Embedding）。
 
 P0-4 修复: 集合名称从 ppt_shop_knowledge 更正为 pdd_shop_knowledge（匹配实际业务）
 P1-2 增强: retrieve() 支持相关性阈值过滤，低相关性片段不注入 Prompt
+P0-FIX: 新增 retrieve_async / add_document_async，将 CPU 密集型的 Embedding/Rerank
+         卸载到线程池，避免阻塞 asyncio 主事件循环导致所有并发请求被挂起。
 """
 
 from __future__ import annotations
 
+import asyncio
+import functools
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
@@ -26,6 +31,10 @@ RERANK_MODEL_NAME = "BAAI/bge-reranker-base"
 
 # P0-4: 修正集合名称，与业务一致
 COLLECTION_NAME = "pdd_shop_knowledge"
+
+# P0-FIX: 独立线程池，用于卸载 CPU 密集型的 Embedding/Rerank 计算
+# max_workers=2: 限制并发模型推理数量，避免 OOM（单模型已占用 ~200MB 内存）
+_model_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="rag-model")
 
 # 懒加载 - 避免启动时长时间等待
 _sentence_model = None
@@ -203,6 +212,33 @@ class RAGEngine:
             logger.warning(f"RAG 检索失败，不使用知识库上下文: {e}")
             return []
 
+    async def retrieve_async(
+        self,
+        query: str,
+        top_k: int = 3,
+        relevance_threshold: float = None,
+    ) -> list[dict]:
+        """
+        P0-FIX: 异步检索接口 — 将 CPU 密集型的 Embedding + Rerank 卸载到线程池。
+
+        在 FastAPI async 路由中必须使用此方法，否则 sentence-transformers 的
+        model.encode() 和 CrossEncoder.predict() 会阻塞 asyncio 主事件循环，
+        导致所有并发的 HTTP / WebSocket 请求被挂起。
+
+        内部通过 ThreadPoolExecutor 在独立线程中执行同步 retrieve()，
+        主事件循环保持空闲，可继续处理其他 I/O。
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            _model_executor,
+            functools.partial(
+                self.retrieve,
+                query=query,
+                top_k=top_k,
+                relevance_threshold=relevance_threshold,
+            ),
+        )
+
     def build_context(self, retrieved_docs: list[dict]) -> str:
         """将检索结果组装为 Prompt 上下文字符串"""
         if not retrieved_docs:
@@ -216,7 +252,7 @@ class RAGEngine:
         return "\n".join(context_parts)
 
     def add_document(self, content: str, metadata: dict):
-        """将单条文档手动存入向量库"""
+        """将单条文档手动存入向量库（同步版本，供脚本/测试使用）"""
         try:
             doc_id = f"doc_{int(time.time() * 1000)}"
             embedding = get_local_embedding(content)
@@ -231,6 +267,14 @@ class RAGEngine:
         except Exception as e:
             logger.error(f"RAG 存入知识失败: {e}")
             return None
+
+    async def add_document_async(self, content: str, metadata: dict):
+        """P0-FIX: 异步版本 — 将 Embedding 计算卸载到线程池"""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            _model_executor,
+            functools.partial(self.add_document, content=content, metadata=metadata),
+        )
 
     def add_qa_pair(self, question: str, answer: str, source: str = "human_sync"):
         """

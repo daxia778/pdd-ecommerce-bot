@@ -32,8 +32,19 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from config.settings import settings
 from main import app
 from src.models.database import Base, get_db
+
+
+@pytest.fixture(scope="module", autouse=True)
+def wipe_admin_password_hash():
+    """强制清除本地 .env 中的密码 hash 避免鉴权测试失败"""
+    original = settings.admin_password_hash
+    settings.admin_password_hash = ""
+    yield
+    settings.admin_password_hash = original
+
 
 # =========================================================
 # P1-4: LLM Mock — 避免测试消耗真实 Token / 触发限频
@@ -42,10 +53,10 @@ from src.models.database import Base, get_db
 STUB_LLM_REPLY = "您好！这是测试环境的AI模拟回复。"
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="module", autouse=True)
 def mock_llm_globally():
     """
-    会话级 LLM mock：在整个测试过程中拦截 LLMClient.chat，
+    模块级 LLM mock：在此测试文件执行期间拦截 LLMClient.chat，
     返回固定的 stub 回复而不调用真实 API。
     这样可以：
     1. 避免消耗 API Token
