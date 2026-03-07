@@ -80,11 +80,21 @@ class Order(Base):
     user_id = Column(String(64), nullable=False, index=True)
     platform = Column(String(16), default="pdd")
 
-    # 状态机：'consulting' -> 'req_fixed' -> 'generating' -> 'processing' -> 'awaiting_review' -> 'shipped'
+    # 订单类型: 'single_page' / 'standard' / 'large'
+    order_type = Column(String(16), default="standard")
+    # 紧急度: 'normal' / 'urgent' / 'very_urgent'
+    urgency = Column(String(16), default="normal")
+
+    # 状态机：'consulting' -> 'req_fixed' -> 'wechat_pending' -> 'generating' -> 'processing' -> 'awaiting_review' -> 'shipped'
     status = Column(String(32), default="consulting")
 
     # 结构化需求 (JSON 存储)
-    requirement_json = Column(Text, nullable=True)  # {"topic": "...", "pages": 10, "style": "..."}
+    requirement_json = Column(Text, nullable=True)  # {"topic":"..","pages":10,"style":".."}
+
+    # 微信对接信息
+    wechat_qr_image_path = Column(Text, nullable=True)  # 顾客微信二维码图片存储路径
+    wechat_added = Column(Boolean, default=False)  # 是否已添加微信
+    wecom_chat_id = Column(String(64), nullable=True)  # 企业微信群聊 chatid
 
     # 生成结果
     file_url = Column(Text, nullable=True)  # 生成的 PPT 下载链接 (含/不含水印)

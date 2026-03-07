@@ -122,19 +122,27 @@ class TaskCoordinator:
         uid_suffix = str(uuid.uuid4()).replace("-", "")[:4].upper()
         order_sn = f"PPT{datetime.now().strftime('%Y%m%d%H%M%S')}{str(user_id)[-4:]}{uid_suffix}"
 
-        # 1. 持久化订单到数据库
+        # 提取新增字段
+        order_type = requirement.get("order_type", "standard")
+        urgency = requirement.get("urgency", "normal")
+
+        # 1. 持久化订单到数据库（初始状态：等待微信二维码）
         db = SessionLocal()
         try:
             new_order = Order(
                 order_sn=order_sn,
                 user_id=user_id,
                 platform=platform,
-                status="req_fixed",
+                order_type=order_type,
+                urgency=urgency,
+                status="wechat_pending",  # 等待顾客发送微信二维码
                 requirement_json=json.dumps(requirement, ensure_ascii=False),
             )
             db.add(new_order)
             db.commit()
-            logger.info(f"Pipeline | 订单创建成功: {order_sn} | 用户: {user_id}")
+            logger.info(
+                f"Pipeline | 订单创建成功: {order_sn} | 用户: {user_id} | 类型: {order_type} | 紧急度: {urgency}"
+            )
         except Exception as e:
             logger.error(f"Pipeline | 创建订单失败: {e}")
             db.rollback()
@@ -142,7 +150,21 @@ class TaskCoordinator:
         finally:
             db.close()
 
-        # 2. 分派任务
+        # 2. 异步通知企业微信（如已配置）
+        try:
+            from src.services.wecom_client import wecom_client
+
+            asyncio.create_task(
+                wecom_client.notify_new_order(
+                    order_sn=order_sn,
+                    user_id=user_id,
+                    requirement=requirement,
+                )
+            )
+        except Exception as e:
+            logger.debug(f"企业微信通知跳过: {e}")
+
+        # 3. 分派 PPT 生产任务
         queue = _get_queue()
         if queue is not None:
             # Redis 模式：推入 RQ 队列

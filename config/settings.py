@@ -59,6 +59,17 @@ class Settings(BaseSettings):
     # 逗号分隔的允许跨域来源；生产环境改为实际域名
     cors_origins: str = "http://localhost:8100,http://127.0.0.1:8100,http://localhost:3000"
 
+    # ===== 企业微信配置（对接设计师工作流）=====
+    wecom_corp_id: str = ""  # 企业ID
+    wecom_corp_secret: str = ""  # 应用Secret
+    wecom_agent_id: int = 0  # 应用AgentId
+    # 默认通知的设计师 UserID 列表（逗号分隔）
+    wecom_default_notify_ids_str: str = ""
+
+    @property
+    def wecom_default_notify_ids(self) -> list[str]:
+        return [uid.strip() for uid in self.wecom_default_notify_ids_str.split(",") if uid.strip()]
+
     # ===== 网络代理 =====
     http_proxy: str = ""
     https_proxy: str = ""
