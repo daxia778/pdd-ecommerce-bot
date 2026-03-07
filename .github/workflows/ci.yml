@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11"]
+        python-version: ["3.10", "3.11", "3.12"]
 
     steps:
       - uses: actions/checkout@v4
@@ -74,7 +74,7 @@ jobs:
             --cov=src --cov=config \
             --cov-report=term-missing \
             --cov-report=html:coverage_html \
-            --cov-fail-under=15
+            --cov-fail-under=40
         env:
           DB_URL: "sqlite:///:memory:"
           ZHIPU_API_KEYS: "test-key-for-ci"

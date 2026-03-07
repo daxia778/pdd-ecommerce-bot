@@ -9,10 +9,12 @@ P1-6: /health 端点新增 LLM ping 探测，快速确认 LLM API 是否可用
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import json
 import re
+import time
 
 from cachetools import TTLCache
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
@@ -248,18 +250,20 @@ async def _process_chat(
             "\n标准单需确认主题+页数+风格后触发。"
         )
 
+    _llm_start = time.monotonic()
     try:
         reply = await llm.chat(messages=history, system_prompt=system_prompt)
-        import contextlib
-
+        response_time_ms = int((time.monotonic() - _llm_start) * 1000)
         with contextlib.suppress(Exception):
             _debounce_cache[cache_key] = reply
     except Exception as e:
         logger.error(f"LLM 调用异常: {e}")
         raise HTTPException(status_code=503, detail=f"AI 服务暂时不可用: {str(e)}") from e
 
-    # === AI 回复持久化 ===
-    session_manager.add_message_sync(user_id, "assistant", reply, db=db, platform=platform)
+    # === AI 回复持久化（P2-2: 撰入实际耐时 ms）===
+    session_manager.add_message_sync(
+        user_id, "assistant", reply, db=db, platform=platform, response_time_ms=response_time_ms
+    )
     final_history = session_manager.get_history(user_id, db=db)
 
     # === PPT 自动化任务触发检测 ===

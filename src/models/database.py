@@ -33,6 +33,8 @@ class Message(Base):
     role = Column(String(16), nullable=False)  # 'user' / 'assistant'
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.now)
+    # P2-2: AI 回复的实际耐时（ms），用于 Dashboard 平均响应耐时统计
+    response_time_ms = Column(Integer, nullable=True)
 
 
 class Escalation(Base):

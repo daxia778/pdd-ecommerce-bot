@@ -42,17 +42,23 @@ def save_message_and_upsert_session(
     role: str,
     content: str,
     platform: str = "test",
+    response_time_ms: int | None = None,
 ) -> Message:
     """
     P0-3/P1-3: 在单次事务中同时完成：
     1. 写入消息记录
     2. Upsert Session（首次创建或更新 updated_at + message_count）
 
-    原来: save_message() + get_or_create_session() + update_session() = 3次DB往返
-    现在: 1次事务，message_count 每条消息准确 +1
+    P2-2: 新增 response_time_ms 参数，将 AI 回复实际耗时落库，供 Dashboard 统计展示
     """
-    # 写消息
-    msg = Message(user_id=user_id, role=role, content=content, platform=platform)
+    # 写消息（AI 回复时附带耗时）
+    msg = Message(
+        user_id=user_id,
+        role=role,
+        content=content,
+        platform=platform,
+        response_time_ms=response_time_ms,
+    )
     db.add(msg)
 
     # Upsert Session
