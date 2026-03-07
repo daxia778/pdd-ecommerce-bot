@@ -9,12 +9,15 @@ P1-6: /health 端点新增 LLM ping 探测，快速确认 LLM API 是否可用
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import json
 import re
+import time
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from cachetools import TTLCache
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session as DBSession
 
@@ -32,8 +35,8 @@ from src.utils.logger import logger
 
 router = APIRouter()
 
-# P1-2: 语义防抖缓存（模块级单例，替代之前不安全的 globals() 动态注入）
-_debounce_cache: dict = {}
+# P1-2 (P0-3 修复): 语义防抖缓存，使用 TTLCache 避免内存泄漏，最大 1000 条，生命周期 1 小时
+_debounce_cache = TTLCache(maxsize=1000, ttl=3600)
 
 # ===== PPT 设计店铺精细化 System Prompt =====
 BASE_SYSTEM_PROMPT = """你现在是拼多多「PPT金牌定制中心」的资深首席设计顾问，代号"小设"。
@@ -170,8 +173,9 @@ async def _process_chat(
         session_manager.clear_session(user_id)
         logger.info(f"清空会话历史 | user_id: {user_id}")
 
-    # P1-2: 语义缓存 (Semantic Cache) - 直接使用模块级单例变量
-    cache_key = f"qa_cache:{hash(message)}"
+    # P1-2 (P0-3 修复): 语义缓存 (Semantic Cache) - 用 MD5 保证重启/多进程下的稳定一致
+    hash_obj = hashlib.md5(message.encode("utf-8")).hexdigest()
+    cache_key = f"qa_cache:{hash_obj}"
     try:
         if cache_key in _debounce_cache:
             cached_reply = _debounce_cache[cache_key]
@@ -188,7 +192,8 @@ async def _process_chat(
         logger.warning(f"Memory cache error: {e}")
 
     # === RAG 检索（含 P1-2 相关性过滤）===
-    retrieved_docs = rag.retrieve(query=message, top_k=3)
+    # P0-1 修复：改用异步 retrieve_async 将运算卸载到线程池
+    retrieved_docs = await rag.retrieve_async(query=message, top_k=3)
     rag_context = rag.build_context(retrieved_docs)
     system_prompt = BASE_SYSTEM_PROMPT.format(
         rag_context=rag_context if rag_context else "（知识库暂未入库，请凭经验回答）"
@@ -245,20 +250,20 @@ async def _process_chat(
             "\n标准单需确认主题+页数+风格后触发。"
         )
 
+    _llm_start = time.monotonic()
     try:
         reply = await llm.chat(messages=history, system_prompt=system_prompt)
-        try:
+        response_time_ms = int((time.monotonic() - _llm_start) * 1000)
+        with contextlib.suppress(Exception):
             _debounce_cache[cache_key] = reply
-            if len(_debounce_cache) > 1000:
-                _debounce_cache.clear()
-        except Exception:
-            pass
     except Exception as e:
         logger.error(f"LLM 调用异常: {e}")
         raise HTTPException(status_code=503, detail=f"AI 服务暂时不可用: {str(e)}") from e
 
-    # === AI 回复持久化 ===
-    session_manager.add_message_sync(user_id, "assistant", reply, db=db, platform=platform)
+    # === AI 回复持久化（P2-2: 撰入实际耐时 ms）===
+    session_manager.add_message_sync(
+        user_id, "assistant", reply, db=db, platform=platform, response_time_ms=response_time_ms
+    )
     final_history = session_manager.get_history(user_id, db=db)
 
     # === PPT 自动化任务触发检测 ===
@@ -362,6 +367,7 @@ async def chat(req: ChatRequest, db: DBSession = Depends(get_db)):
 async def pdd_webhook(
     request: Request,
     req: PddWebhookRequest,
+    background_tasks: BackgroundTasks,
     x_pdd_sign: str | None = Header(None, alias="X-PDD-Sign"),
     db: DBSession = Depends(get_db),
 ):
@@ -407,40 +413,50 @@ async def pdd_webhook(
     if req.type != "customer_message":
         return {"status": "ignored", "reason": f"不处理消息类型: {req.type}"}
 
-    try:
-        result = await _process_chat(
-            user_id=req.buyer_id,
-            message=req.content,
-            platform="pdd",
-            db=db,
-            image_url=req.image_url,
-        )
-    except HTTPException:
-        reply = "亲，客服系统正在维护中，请稍后再联系我们，抱歉给您带来不便！🙏"
-        return {"status": "error", "buyer_id": req.buyer_id, "reply": reply}
-
-    logger.info(f"PDD Webhook 回复 | buyer_id: {req.buyer_id} | 升级: {result['escalated']}")
-
-    # Phase 4: 调用 PDD 开放平台 API 将 reply 发送给买家
-    # 这里异步调用不会阻塞当前的 webhook 响应回调
-    send_ok = await pdd_api_client.send_customer_message(
-        mall_id=req.shop_id, buyer_id=req.buyer_id, content=result["reply"]
-    )
-
-    if not send_ok:
-        logger.warning(f"向买家 {req.buyer_id} 发送 PDD 消息失败，可能由于暂未配置正确的 API Key，已降级或丢弃。")
-
-    # 触发前端看板实时更新
-    await manager.broadcast({"event": "update", "user_id": req.buyer_id})
+    # P0-2 修复: 异步解耦，立即返回 ACK 避免拼多多等平台超时重发导致重复订单和刷屏
+    background_tasks.add_task(_process_pdd_webhook_background, req)
 
     return {
         "status": "success",
+        "msg": "queued",
         "buyer_id": req.buyer_id,
-        "reply": result["reply"],
-        "pdd_push_success": send_ok,
-        "escalated": result["escalated"],
-        "escalation_reason": result["escalation_reason"],
     }
+
+
+async def _process_pdd_webhook_background(req: PddWebhookRequest):
+    """P0-2: 背景处理 PDD Webhook 请求大模型，独立提供数据库 session 防止关闭报错"""
+    from src.models.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        try:
+            result = await _process_chat(
+                user_id=req.buyer_id,
+                message=req.content,
+                platform="pdd",
+                db=db,
+                image_url=req.image_url,
+            )
+        except HTTPException:
+            reply = "亲，客服系统正在维护中，请稍后再联系我们，抱歉给您带来不便！🙏"
+            result = {"reply": reply, "escalated": False, "escalation_reason": ""}
+
+        logger.info(f"PDD Webhook 回复 (后台) | buyer_id: {req.buyer_id} | 升级: {result['escalated']}")
+
+        # Phase 4: 异步调用 PDD 开放平台 API 将 reply 发送给买家
+        send_ok = await pdd_api_client.send_customer_message(
+            mall_id=req.shop_id, buyer_id=req.buyer_id, content=result["reply"]
+        )
+
+        if not send_ok:
+            logger.warning(f"向买家 {req.buyer_id} 发送 PDD 消息失败，可能由于暂未配置正确的 API Key，已降级或丢弃。")
+
+        # 触发前端看板实时更新
+        await manager.broadcast({"event": "update", "user_id": req.buyer_id})
+    except Exception as e:
+        logger.error(f"处理 PDD Webhook 背景任务异常: {e}")
+    finally:
+        db.close()
 
 
 @router.get("/health", summary="健康检查（含LLM可达性探测）")

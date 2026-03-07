@@ -79,12 +79,11 @@ async def _get_stats_cached(db: DBSession):
     pending_escalations = db.query(Escalation).filter(Escalation.status == "pending").count()
     active_orders = db.query(Order).filter(Order.status.in_(["generating", "processing", "awaiting_review"])).count()
 
-    # P0.2 新增字段
-    # 1. 已交付订单数 (shipped)
+    # 1. 订单统计
     shipped_orders = db.query(Order).filter(Order.status == "shipped").count()
-    db.query(Order).count()
+    total_orders = db.query(Order).count()  # 历史订单总数，供看板展示
 
-    # 2. 成单转化率：已交付订单 / 活跃会话（取最大值避免除零）
+    # 2. 成单转化率：已交付订单 / 总会话数（取最大值避免除零）
     total_sessions = db.query(Session).count()
     if total_sessions > 0:
         conversion_rate = f"{min(shipped_orders / total_sessions * 100, 100):.1f}%"
@@ -95,7 +94,7 @@ async def _get_stats_cached(db: DBSession):
     avg_order_value = 900
     total_revenue = f"¥ {shipped_orders * avg_order_value:,}"
 
-    # 4. AI 智能解决率：未升级 / 总活跃会话（升级即为未自动解决）
+    # 4. AI 智能解决率：未升级 / 总活跃会话
     total_escalations = db.query(Escalation).count()
     if total_sessions > 0:
         escalation_rate = total_escalations / total_sessions
@@ -103,13 +102,23 @@ async def _get_stats_cached(db: DBSession):
     else:
         satisfaction_rate = "98.5%"  # 无数据时显示示例值
 
-    # 5. 平均响应耗时：当前为固定值，后续可接入真实 latency 统计
-    avg_response_time = "1.2s"
+    # 5. P2-2: 平均响应耗时 — 从 Message.response_time_ms 读取真实数据
+    #    仅统计有耗时记录的 AI 回复消息（role=assistant），确保准确性
+    avg_ms_row = (
+        db.query(func.avg(Message.response_time_ms))
+        .filter(Message.role == "assistant", Message.response_time_ms.is_not(None))
+        .scalar()
+    )
+    if avg_ms_row and avg_ms_row > 0:
+        avg_response_time = f"{avg_ms_row / 1000:.1f}s"
+    else:
+        avg_response_time = "暂无数据"
 
     return {
         "active_sessions": active_sessions,
         "pending_escalations": pending_escalations,
         "active_orders": active_orders,
+        "total_orders": total_orders,
         "conversion_rate": conversion_rate,
         "total_revenue": total_revenue,
         "satisfaction_rate": satisfaction_rate,

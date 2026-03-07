@@ -62,15 +62,16 @@ class SessionManager:
         content: str,
         db=None,
         platform: str = "test",
+        response_time_ms: int | None = None,
     ) -> None:
         """
         同步接口（从同步上下文调用，如 webhook 处理流程中）。
         P1-1: 内存写操作不能在同步函数中用 asyncio.Lock，使用独立的同步写方法。
-        在真实高并发场景下推荐切换到 Redis，这是内存降级路径。
+        P2-2: 新增 response_time_ms 参数透传到 DB 层，采集 AI 回复耐时。
         """
         self._write_to_memory(user_id, role, content)
         if db is not None:
-            self._persist_to_db(user_id, role, content, db, platform)
+            self._persist_to_db(user_id, role, content, db, platform, response_time_ms=response_time_ms)
 
     def _write_to_memory(self, user_id: str, role: str, content: str) -> None:
         """内存写操作的原子单元（供 async/sync 接口共同调用）"""
@@ -82,7 +83,9 @@ class SessionManager:
         self._store[key] = self._store[key][-self._max_history :]
         logger.debug(f"Session 更新 | user_id: {user_id} | 缓存至 Memory")
 
-    def _persist_to_db(self, user_id: str, role: str, content: str, db, platform: str) -> None:
+    def _persist_to_db(
+        self, user_id: str, role: str, content: str, db, platform: str, response_time_ms: int | None = None
+    ) -> None:
         """SQLite 持久化（同步，可在锁外执行）"""
         try:
             from src.services.db_service import save_message_and_upsert_session
@@ -93,6 +96,7 @@ class SessionManager:
                 role=role,
                 content=content,
                 platform=platform,
+                response_time_ms=response_time_ms,
             )
         except Exception as e:
             logger.error(f"Session 写库失败 | user_id: {user_id} | {e}")

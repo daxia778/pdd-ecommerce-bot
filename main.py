@@ -64,10 +64,23 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ LLM 客户端初始化失败: {e}")
 
-    # 安全校验：检测 JWT Secret 是否为默认开发密钥
+    # P1-4: 安全校验 — 生产环境强制拦截弱 JWT 密钥
+    _app_env = os.getenv("APP_ENV", "development").lower()
     _jwt_key = getattr(settings, "jwt_secret_key", "")
-    if not _jwt_key or _jwt_key == "dev-secret-key-change-in-prod":
-        logger.warning("⚠️ 使用了默认的 JWT 开发密钥！请在 .env 设置生产级密钥 JWT_SECRET_KEY=")
+    _jwt_is_weak = not _jwt_key or _jwt_key == "dev-secret-key-change-in-prod" or len(_jwt_key) < 32
+    if _jwt_is_weak:
+        if _app_env == "production":
+            # 生产环境：硬性拦截，阻止服务以不安全状态启动
+            raise SystemExit(
+                "❌ [FATAL] 生产环境禁止使用弱 JWT 密钥！\n"
+                "   请在 .env 中设置不少于 32 字符的随机字符串：\n"
+                "   JWT_SECRET_KEY=$(openssl rand -hex 32)"
+            )
+        else:
+            logger.warning(
+                "⚠️  JWT_SECRET_KEY 使用了默认开发密钥（长度不足或未配置）。"
+                "部署到生产前请在 .env 设置强密钥，否则 API Token 存在伪造风险！"
+            )
 
     # 预热 RAG 模型（后台异步，避免第一个用户请求超时）
     async def _prewarm_rag():

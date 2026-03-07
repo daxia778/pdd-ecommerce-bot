@@ -33,6 +33,8 @@ class Message(Base):
     role = Column(String(16), nullable=False)  # 'user' / 'assistant'
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.now)
+    # P2-2: AI 回复的实际耐时（ms），用于 Dashboard 平均响应耐时统计
+    response_time_ms = Column(Integer, nullable=True)
 
 
 class Escalation(Base):
@@ -125,7 +127,13 @@ def _make_engine():
 
     if db_url.startswith("sqlite"):
         # SQLite 需特殊参数绕过多线程保护
-        connect_args = {"check_same_thread": False}
+        # P1-1: timeout=15 —— 让 SQLite 驱动在遇到写锁争用时自旋最多 15s，
+        #        而非立刻抛出 OperationalError: database is locked。
+        #        与下方 PRAGMA busy_timeout 双重保障，适配多个 BackgroundTasks 并发写入场景。
+        connect_args = {
+            "check_same_thread": False,
+            "timeout": 15,
+        }
     else:
         # PostgreSQL / MySQL 的生产级连接池配置
         engine_kwargs["pool_size"] = 10
@@ -138,7 +146,7 @@ def _make_engine():
         **engine_kwargs,
     )
 
-    # P0-3/P0-8: 对于 SQLite，启用 WAL 模式和 Normal 同步模式，大幅提升并发
+    # P0-3/P0-8: 对于 SQLite，启用 WAL 模式和 Normal 同步模式，大幅提升并发读写性能
     if db_url.startswith("sqlite"):
         from sqlalchemy import event
 
@@ -148,6 +156,9 @@ def _make_engine():
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA synchronous=NORMAL")
             cursor.execute("PRAGMA cache_size=-64000")  # 64MB Cache
+            # P1-1: PRAGMA busy_timeout 作为 C 层二重保障（单位毫秒）
+            # 即使 Python 层 timeout 未触发，底层 SQLite C 库也会自旋等待
+            cursor.execute("PRAGMA busy_timeout=15000")
             cursor.close()
     else:
         # P3: 对于 PostgreSQL/MySQL 等，直接返回连接池引擎
