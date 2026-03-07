@@ -249,6 +249,40 @@ ChromaDB 相似度检索（Top-3，阈值 ≥ 0.3）
 
 ---
 
+## 🗺️ 项目现状与后续优化路径 (2026-03-06 更新)
+
+### ✅ 当前已实现的核心能力
+- **基础对话与持久化**：FastAPI 主干、SQLite WAL 持久化、Session 内存隔离与冷热加载。
+- **大模型高可用**：多 API Key 轮询、鉴权失败自动封禁、指数退避重试机制。
+- **RAG 知识检索**：ChromaDB 本地向量库 + BAAI Rerank 精排。
+- **智能意图分类**：LLM 会话分析 + 投诉/大额订单/降价等规则兜底，精准触发人工介入。
+- **全景监控**：Vue3 大屏，集成 WebSocket 实时更新及统计分析。
+
+### 🚀 后续优化与升级路径（分级建议）
+
+**🔴 P0 级修复（阻塞性问题，应优先解决）**
+1. 修复 `main.py` 中 `asyncio` 导入顺序导致的潜在生命周期异步预热报错。
+2. 修复 `rag_engine.py` 中精排(Rerank)结果未应用相似度阈值过滤的逻辑空洞。
+3. 补充 `settings.py` 中多模型（DeepSeek/Gemini）的 Key 列表解析逻辑。
+
+**🟠 P1 级优化（提升系统稳定性与可靠性）**
+1. 为 `session_manager.py` 的内存缓冲池加入并发锁（Async Lock），防止高并发读写污染。
+2. 将防抖缓存 `_debounce_cache` 从不安全的 `globals()` 注入改为标准的模块级变量。
+3. 增加内存限流器 `_rate_limit_store` 的定期过期数据回收机制，防止内存泄漏。
+4. 在自动化测试中添加 LLM 调用的 Mock 控制，避免测试消耗真实 Tokens 和触发限频。
+
+**🟡 P2 级增强（业务功能扩展）**
+1. **PDD API 正式接入**：在获取到拼多多官方 `app_key`、`app_secret` 与 `access_token` 后，激活 `pdd_api_client.py`，实现真实的 Webhook 消息下发回填。当前该模块跳过真实发送，处于就绪挂起状态。
+2. 完善前端构建工作流，实现 Vue3 源码自动构建打包并挂载至 FastAPI 静态目录。
+3. 落地知识库文章的“软删除机制”及版本控制记录。
+
+**🔵 P3 级架构演进（长期规划）**
+1. 根据会话量级增长情况，将 SQLite 迁移至正式的 **PostgreSQL**。
+2. 将当前暂代 Redis 的内存字典缓冲机制替换为真实的 Redis Cluster 方案，实现多实例横向拓展。
+3. 增强真实 Webhook 入口的安全校验机制（HMAC 签名校验）。
+
+---
+
 ## 📄 License
 
 MIT © 2026 [daxia778](https://github.com/daxia778)

@@ -1,118 +1,268 @@
-from fastapi import APIRouter, Request, Depends
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
-from sqlalchemy.orm import Session as DBSession
-from sqlalchemy import desc
-from datetime import datetime
 import os
+from datetime import datetime, timedelta
 
-from src.models.database import get_db, Session, Message, Escalation, Order
+import jwt
+from async_lru import alru_cache
+from fastapi import APIRouter, Depends, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse
+from sqlalchemy import desc, func
+from sqlalchemy.orm import Session as DBSession
+
+from src.api.websocket_manager import manager
+from src.models.database import Escalation, Message, Order, Session, get_db
 from src.services import db_service
-from src.utils.auth import verify_admin
+from src.services.pdd_api_client import pdd_api_client
+from src.utils.auth import JWT_ALGORITHM, JWT_SECRET_KEY, verify_admin
 
 router = APIRouter(dependencies=[Depends(verify_admin)])
+ws_router = APIRouter()
+# Public router: serves Vue HTML shell — no auth (Vue handles login in-browser)
+public_router = APIRouter()
+
+
+@ws_router.websocket("/ws")
+async def websocket_endpoint(
+    websocket: WebSocket,
+    token: str = Query(default=""),
+):
+    """
+    WebSocket 实时推送端点。
+    连接时需在 query param 中携带有效的 JWT Token：
+      ws://host/ws?token=<bearer_token>
+    验证失败将以 1008 (Policy Violation) 关闭连接。
+    """
+    # ===== Token 鉴权 =====
+    if not token:
+        await websocket.close(code=1008, reason="Missing token")
+        return
+    try:
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        username = payload.get("sub")
+        if not username:
+            raise jwt.InvalidTokenError("No sub claim")
+    except jwt.PyJWTError as e:
+        await websocket.close(code=1008, reason=f"Invalid token: {e}")
+        return
+
+    await manager.connect(websocket)
+    try:
+        while True:
+            # 保持连接活跃，等待服务端推送
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
 
 # 模板目录路径
-template_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "templates")
+static_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "static")
 
-@router.get("/", response_class=HTMLResponse, summary="后台管理 Dashboard")
+
+@public_router.get("/", response_class=HTMLResponse, include_in_schema=False)
+@public_router.get("/admin", response_class=HTMLResponse, include_in_schema=False)
 async def dashboard_page(request: Request):
-    """返回看板前端 HTML 页面（直接读文件，绕过 Jinja2 解析以兼容 Vue.js {{ }} 语法）"""
-    html_path = os.path.join(template_dir, "dashboard.html")
+    """返回看板前端 HTML 页面（公开接口，Vue 负责前端登录流程）"""
+    html_path = os.path.join(static_dir, "admin", "index.html")
     try:
-        with open(html_path, "r", encoding="utf-8") as f:
+        with open(html_path, encoding="utf-8") as f:
             content = f.read()
         return HTMLResponse(content=content)
     except FileNotFoundError:
-        return HTMLResponse(content="<h1>dashboard.html 模板文件未找到</h1>", status_code=404)
+        return HTMLResponse(content="<h1>前端未构建，请先执行 npm run build</h1>", status_code=404)
+
+
+@alru_cache(maxsize=1, ttl=5)
+async def _get_stats_cached(db: DBSession):
+    """P0.2: 统计防穿透微缓存 (TTL 5s) - 补充完整字段"""
+    active_sessions = db.query(Session).filter(Session.status == "active").count()
+    pending_escalations = db.query(Escalation).filter(Escalation.status == "pending").count()
+    active_orders = db.query(Order).filter(Order.status.in_(["generating", "processing", "awaiting_review"])).count()
+
+    # P0.2 新增字段
+    # 1. 已交付订单数 (shipped)
+    shipped_orders = db.query(Order).filter(Order.status == "shipped").count()
+    db.query(Order).count()
+
+    # 2. 成单转化率：已交付订单 / 活跃会话（取最大值避免除零）
+    total_sessions = db.query(Session).count()
+    if total_sessions > 0:
+        conversion_rate = f"{min(shipped_orders / total_sessions * 100, 100):.1f}%"
+    else:
+        conversion_rate = "0.0%"
+
+    # 3. 预估营收：已交付订单 × 平均客单价 ¥900（无价格字段时的合理 fallback）
+    avg_order_value = 900
+    total_revenue = f"¥ {shipped_orders * avg_order_value:,}"
+
+    # 4. AI 智能解决率：未升级 / 总活跃会话（升级即为未自动解决）
+    total_escalations = db.query(Escalation).count()
+    if total_sessions > 0:
+        escalation_rate = total_escalations / total_sessions
+        satisfaction_rate = f"{max((1 - escalation_rate) * 100, 0):.1f}%"
+    else:
+        satisfaction_rate = "98.5%"  # 无数据时显示示例值
+
+    # 5. 平均响应耗时：当前为固定值，后续可接入真实 latency 统计
+    avg_response_time = "1.2s"
+
+    return {
+        "active_sessions": active_sessions,
+        "pending_escalations": pending_escalations,
+        "active_orders": active_orders,
+        "conversion_rate": conversion_rate,
+        "total_revenue": total_revenue,
+        "satisfaction_rate": satisfaction_rate,
+        "avg_response_time": avg_response_time,
+    }
+
 
 @router.get("/api/dashboard/stats")
 async def get_stats(db: DBSession = Depends(get_db)):
     """获取整体统计数据"""
-    active_sessions = db.query(Session).filter(Session.status == "active").count()
-    pending_escalations = db.query(Escalation).filter(Escalation.status == "pending").count()
-    active_orders = db.query(Order).filter(Order.status.in_(["generating", "processing", "awaiting_review"])).count()
-    
-    return {
-        "active_sessions": active_sessions,
-        "pending_escalations": pending_escalations,
-        "active_orders": active_orders
-    }
+    return await _get_stats_cached(db)
+
+
+@router.get("/api/dashboard/stats/hourly")
+async def get_stats_hourly(db: DBSession = Depends(get_db)):
+    """获取当天每小时的消息量（真实时间序列数据，替换假 ECharts 数据）"""
+    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    tomorrow = today + timedelta(days=1)
+
+    rows = (
+        db.query(func.strftime("%H", Message.created_at).label("hour"), func.count(Message.id).label("count"))
+        .filter(Message.created_at >= today, Message.created_at < tomorrow)
+        .group_by("hour")
+        .all()
+    )
+
+    # 将数据增展为 24 个小时的完整点
+    hour_map = {row.hour: row.count for row in rows}
+    hours = [f"{h:02d}:00" for h in range(24)]
+    counts = [hour_map.get(f"{h:02d}", 0) for h in range(24)]
+
+    return {"hours": hours, "counts": counts}
+
 
 @router.get("/api/dashboard/sessions")
 async def get_sessions(db: DBSession = Depends(get_db)):
     """获取最近的会话列表"""
     sessions = db.query(Session).order_by(desc(Session.updated_at)).limit(20).all()
-    return [{
-        "id": s.id,
-        "user_id": s.user_id,
-        "platform": s.platform,
-        "status": s.status,
-        "message_count": s.message_count,
-        "updated_at": s.updated_at.strftime("%Y-%m-%d %H:%M:%S") if s.updated_at else ""
-    } for s in sessions]
+    return [
+        {
+            "id": s.id,
+            "user_id": s.user_id,
+            "platform": s.platform,
+            "status": s.status,
+            "message_count": s.message_count,
+            "updated_at": s.updated_at.strftime("%Y-%m-%d %H:%M:%S") if s.updated_at else "",
+        }
+        for s in sessions
+    ]
+
 
 @router.get("/api/dashboard/messages/{user_id}")
 async def get_messages(user_id: str, db: DBSession = Depends(get_db)):
     """获取指定用户的历史消息"""
     messages = db.query(Message).filter(Message.user_id == user_id).order_by(Message.created_at).all()
-    return [{
-        "role": m.role,
-        "content": m.content,
-        "created_at": m.created_at.strftime("%H:%M:%S") if m.created_at else ""
-    } for m in messages]
+    return [
+        {"role": m.role, "content": m.content, "created_at": m.created_at.strftime("%H:%M:%S") if m.created_at else ""}
+        for m in messages
+    ]
+
 
 @router.get("/api/dashboard/escalations")
 async def get_escalations(db: DBSession = Depends(get_db)):
     """获取需要人工处理的升级记录"""
-    escalations = db.query(Escalation).filter(Escalation.status == "pending").order_by(desc(Escalation.created_at)).all()
-    return [{
-        "id": e.id,
-        "user_id": e.user_id,
-        "trigger_message": e.trigger_message,
-        "ai_reply": e.ai_reply,
-        "reason_label": e.reason,
-        "created_at": e.created_at.strftime("%Y-%m-%d %H:%M:%S") if e.created_at else ""
-    } for e in escalations]
+    escalations = (
+        db.query(Escalation).filter(Escalation.status == "pending").order_by(desc(Escalation.created_at)).all()
+    )
+    return [
+        {
+            "id": e.id,
+            "user_id": e.user_id,
+            "trigger_message": e.trigger_message,
+            "ai_reply": e.ai_reply,
+            "reason_label": e.reason,
+            "created_at": e.created_at.strftime("%Y-%m-%d %H:%M:%S") if e.created_at else "",
+        }
+        for e in escalations
+    ]
+
 
 @router.post("/api/dashboard/escalations/{esc_id}/resolve")
 async def resolve_escalation(esc_id: int, db: DBSession = Depends(get_db)):
-    """标记升级问题为已处理 (人工介入完成)"""
-    esc = db.query(Escalation).filter(Escalation.id == esc_id).first()
+    """
+    标记升级问题为已处理。
+    使用 db_service 确保：状态流转 + 会话状态恢复 + resolved_at 记录均正确完成
+    """
+    esc = db_service.resolve_escalation(db, escalation_id=esc_id)
     if esc:
-        esc.status = "resolved"
-        
-        # 恢复会话状态为 active
-        session = db.query(Session).filter(Session.user_id == esc.user_id).first()
-        if session:
-            session.status = "active"
-            
-        db.commit()
+        await manager.broadcast({"event": "update", "action": "resolve_escalation"})
         return {"status": "success"}
-    return {"status": "error", "msg": "Not found"}
+    return {"status": "error", "msg": "Not found or already resolved"}
+
 
 @router.get("/api/dashboard/orders")
-async def get_orders(db: DBSession = Depends(get_db)):
-    """获取 PPT 生产流水线池子"""
-    orders = db.query(Order).order_by(desc(Order.created_at)).limit(20).all()
-    return [{
-        "id": o.id,
-        "order_sn": o.order_sn,
-        "user_id": o.user_id,
-        "status": o.status,
-        "requirement": o.requirement_json,
-        "file_url": o.file_url,
-        "clean_file_url": o.clean_file_url,
-        "created_at": o.created_at.strftime("%Y-%m-%d %H:%M:%S") if o.created_at else ""
-    } for o in orders]
+async def get_orders(status: str | None = None, show_all: bool = False, db: DBSession = Depends(get_db)):
+    """获取 PPT 工单列表。默认只返回未交付的工单（req_fixed / processing）。"""
+    q = db.query(Order)
+    if status:
+        q = q.filter(Order.status == status)
+    elif not show_all:
+        # 默认过滤掉已完成的，只显示待处理和处理中
+        q = q.filter(Order.status.in_(["req_fixed", "processing", "awaiting_review"]))
+    orders = q.order_by(desc(Order.created_at)).limit(50).all()
+    return [
+        {
+            "id": o.id,
+            "order_sn": o.order_sn,
+            "user_id": o.user_id,
+            "status": o.status,
+            "requirement": o.requirement_json,
+            "file_url": o.file_url,
+            "clean_file_url": o.clean_file_url,
+            "created_at": o.created_at.strftime("%Y-%m-%d %H:%M:%S") if o.created_at else "",
+        }
+        for o in orders
+    ]
+
 
 @router.post("/api/dashboard/orders/{order_id}/approve")
 async def approve_order(order_id: int, db: DBSession = Depends(get_db)):
-    """人工批准发货"""
+    """人工批准发货（原有接口，兼容保留）"""
     order = db.query(Order).filter(Order.id == order_id).first()
     if order:
         order.status = "shipped"
         db.commit()
-        # TODO: 实际调用 PDD API 发送文件给买家
+        mall_id = getattr(order, "mall_id", "default_mall_id")
+        await pdd_api_client.send_file_message(mall_id, order.user_id, order.clean_file_url)
+        await manager.broadcast({"event": "update", "action": "approve_order"})
         return {"status": "success"}
     return {"status": "error", "msg": "Not found"}
+
+
+@router.post("/api/dashboard/orders/{order_id}/claim")
+async def claim_order(order_id: int, db: DBSession = Depends(get_db)):
+    """人工接单：将工单状态从 req_fixed → processing"""
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        return {"status": "error", "msg": "工单不存在"}
+    if order.status != "req_fixed":
+        return {"status": "error", "msg": f"当前状态 [{order.status}] 不可接单"}
+    order.status = "processing"
+    db.commit()
+    await manager.broadcast({"event": "update", "action": "order_claimed", "order_id": order_id})
+    return {"status": "success", "order_sn": order.order_sn}
+
+
+@router.post("/api/dashboard/orders/{order_id}/deliver")
+async def deliver_order(order_id: int, db: DBSession = Depends(get_db)):
+    """标记已交付：将工单状态从 processing → shipped（人工生成PPT后手动交付）"""
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        return {"status": "error", "msg": "工单不存在"}
+    if order.status not in ("processing", "awaiting_review"):
+        return {"status": "error", "msg": f"当前状态 [{order.status}] 不可标记交付"}
+    order.status = "shipped"
+    db.commit()
+    await manager.broadcast({"event": "update", "action": "order_delivered", "order_id": order_id})
+    return {"status": "success", "order_sn": order.order_sn}

@@ -2,15 +2,15 @@
 独立测试脚本 - 直接测试 ZhipuAI API 连通性，不需要启动 FastAPI。
 运行方式：python test_llm.py
 """
+
 import asyncio
-import sys
 import os
+import sys
 
 # 添加项目根目录到 Python 路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from src.core.llm_client import get_llm_client
-from src.utils.logger import logger
 
 # 创建日志目录
 os.makedirs("logs", exist_ok=True)
@@ -95,6 +95,7 @@ async def main():
         except Exception as e:
             print(f"❌ 测试 [{name}] 失败: {type(e).__name__}: {e}")
             import traceback
+
             traceback.print_exc()
 
     print("\n" + "=" * 50)

@@ -1,44 +1,77 @@
 """
 任务协调器 - PPT 生产流水线中心调度器。
 负责管理从需求确认到生成、后处理、审核的完整流程。
+
+P0 修复: 移除模块级 Redis/RQ 强依赖。
+  - 有 Redis：推入 RQ 队列，由 worker.py 独立进程消费
+  - 无 Redis：fallback 到 asyncio.create_task，在当前进程内异步执行（单机模式）
 """
-import json
+
 import asyncio
+import json
+import uuid
 from datetime import datetime
-from sqlalchemy.orm import Session as DBSession
-from redis import Redis
-from rq import Queue
 
 from config.settings import settings
 from src.models.database import Order, SessionLocal
-from src.services.notebooklm_client import notebooklm_client
 from src.utils.logger import logger
 
-redis_conn = Redis.from_url(settings.redis_url)
-task_queue = Queue('ppt_tasks', connection=redis_conn)
+# ===== 懒加载 Redis/RQ（不在模块加载时执行，避免崩溃）=====
+
+_redis_conn = None
+_task_queue = None
+
+
+def _get_queue():
+    """尝试获取 RQ 任务队列，失败则返回 None（降级到 asyncio 模式）"""
+    global _redis_conn, _task_queue
+    if _task_queue is not None:
+        return _task_queue
+    try:
+        from redis import Redis
+        from rq import Queue
+
+        _redis_conn = Redis.from_url(settings.redis_url, socket_connect_timeout=2)
+        _redis_conn.ping()
+        _task_queue = Queue("ppt_tasks", connection=_redis_conn)
+        logger.info("✅ TaskCoordinator | RQ 队列初始化成功（Redis 模式）")
+        return _task_queue
+    except Exception as e:
+        logger.warning(f"⚠️ TaskCoordinator | Redis 不可用，降级到 asyncio 本地模式: {e}")
+        return None
+
+
+# ===== 核心流水线逻辑 =====
+
 
 async def _async_run_production_pipeline(order_sn: str):
     """
     后台生产流水线核心异步逻辑。
+    NotebookLM Playwright 自动化 → 失败降级到 python-pptx 本地生成
     """
     db = SessionLocal()
+    order = None
     try:
         order = db.query(Order).filter(Order.order_sn == order_sn).first()
         if not order:
+            logger.error(f"Pipeline | 订单不存在，跳过 | order_sn: {order_sn}")
             return
 
-        req = json.loads(order.requirement_json)
+        req = json.loads(order.requirement_json or "{}")
 
-        # --- Step 1: 调用 NotebookLM 生成 ---
+        # --- Step 1: 调用 NotebookLM（Playwright 自动化）生成 ---
         order.status = "generating"
         order.generated_at = datetime.now()
         db.commit()
+        logger.info(f"Pipeline | 开始生成 | 订单: {order_sn} | 主题: {req.get('topic')}")
+
+        from src.services.notebooklm_client import notebooklm_client
 
         file_url = await notebooklm_client.generate_ppt(
             topic=req.get("topic", "未命名主题"),
             pages=req.get("pages", 10),
             style=req.get("style", "商务"),
-            requirements=req.get("details", "")
+            requirements=req.get("details", ""),
         )
         order.file_url = file_url
         db.commit()
@@ -49,31 +82,47 @@ async def _async_run_production_pipeline(order_sn: str):
 
         clean_url = await notebooklm_client.remove_watermark(file_url)
         order.clean_file_url = clean_url
-        
+
         # --- Step 3: 进入待审核状态 ---
         order.status = "awaiting_review"
         db.commit()
-        
-        logger.info(f"Pipeline | 任务完成！等待人工审核 | 订单: {order_sn} | 文件: {clean_url}")
-        
+
+        logger.info(f"Pipeline | ✅ 任务完成！等待人工审核 | 订单: {order_sn} | 文件: {clean_url}")
+
     except Exception as e:
-        logger.error(f"Pipeline | 流水线执行异常 [{order_sn}]: {e}")
+        import traceback
+
+        logger.error(f"Pipeline | ❌ 流水线执行异常 [{order_sn}]: {e}", exc_info=True)
+        if order:
+            order.status = "failed"
+            order.error_message = f"流水线异常: {str(e)}\n{traceback.format_exc()}"
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
     finally:
         db.close()
 
+
 def run_production_pipeline_sync(order_sn: str):
-    """同步包裹器，供 RQ Worker 调用"""
+    """同步包裹器，供 RQ Worker 独立进程调用"""
     asyncio.run(_async_run_production_pipeline(order_sn))
+
+
+# ===== 任务协调器 =====
 
 
 class TaskCoordinator:
     async def create_and_start_pipeline(self, user_id: str, platform: str, requirement: dict):
         """
-        创建一个新任务并推入 RQ 队列异步生成。
+        创建新订单并启动生产流水线。
+        - 有 Redis: 推入 RQ 队列（worker.py 消费）
+        - 无 Redis: 直接 asyncio.create_task（当前进程后台运行）
         """
-        order_sn = f"PPT{datetime.now().strftime('%Y%m%d%H%M%S')}{user_id[-4:]}"
-        
-        # 1. 持久化到数据库
+        uid_suffix = str(uuid.uuid4()).replace("-", "")[:4].upper()
+        order_sn = f"PPT{datetime.now().strftime('%Y%m%d%H%M%S')}{str(user_id)[-4:]}{uid_suffix}"
+
+        # 1. 持久化订单到数据库
         db = SessionLocal()
         try:
             new_order = Order(
@@ -81,24 +130,34 @@ class TaskCoordinator:
                 user_id=user_id,
                 platform=platform,
                 status="req_fixed",
-                requirement_json=json.dumps(requirement, ensure_ascii=False)
+                requirement_json=json.dumps(requirement, ensure_ascii=False),
             )
             db.add(new_order)
             db.commit()
             logger.info(f"Pipeline | 订单创建成功: {order_sn} | 用户: {user_id}")
-            
-            # 2. 推入 Redis 任务队列
-            # 将运行环境交由专门的 worker.py 独立进程负责，避免污染 Web 主流程
-            job = task_queue.enqueue(run_production_pipeline_sync, order_sn)
-            logger.info(f"Pipeline | 已加入 RQ 队列 | Job ID: {job.id}")
-            
-            return order_sn
         except Exception as e:
             logger.error(f"Pipeline | 创建订单失败: {e}")
             db.rollback()
             return None
         finally:
             db.close()
+
+        # 2. 分派任务
+        queue = _get_queue()
+        if queue is not None:
+            # Redis 模式：推入 RQ 队列
+            try:
+                job = queue.enqueue(run_production_pipeline_sync, order_sn)
+                logger.info(f"Pipeline | 已加入 RQ 队列 | Job ID: {job.id}")
+            except Exception as e:
+                logger.warning(f"Pipeline | RQ 入队失败，降级到 asyncio | {e}")
+                asyncio.create_task(_async_run_production_pipeline(order_sn))
+        else:
+            # asyncio 本地模式
+            asyncio.create_task(_async_run_production_pipeline(order_sn))
+            logger.info(f"Pipeline | asyncio 本地模式已启动 | 订单: {order_sn}")
+
+        return order_sn
 
 
 task_coordinator = TaskCoordinator()

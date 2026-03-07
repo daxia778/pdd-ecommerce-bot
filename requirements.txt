@@ -12,6 +12,9 @@ python-dotenv==1.0.1
 # 向量数据库 (Phase 2)
 chromadb==0.5.15
 
+# 本地 Embedding 模型（无 API 限速，支持中文）
+sentence-transformers>=2.7.0
+
 # 关系型数据库
 sqlalchemy==2.0.35
 
@@ -29,3 +32,14 @@ aiofiles
 # 缓存与队列
 redis==5.0.3
 rq==1.16.1
+
+# 安全：密码哈希工具
+passlib[bcrypt]>=1.7.4
+
+# Playwright（NotebookLM 自动化）
+playwright>=1.40.0
+
+python-pptx
+PyJWT
+psycopg2-binary
+prometheus-fastapi-instrumentator

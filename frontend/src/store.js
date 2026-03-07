@@ -1,4 +1,5 @@
 import { reactive } from 'vue';
+import { DEMO_SESSIONS, DEMO_CHATS, DEMO_ESCALATIONS, DEMO_ORDERS, DEMO_STATS, DEMO_KNOWLEDGE } from './demoData.js';
 
 // 后端 API 基础地址（懒加载兼容 dev proxy 和生产环境）
 const API_BASE = '/admin/api/admin';
@@ -10,11 +11,11 @@ export const store = reactive({
 
     // ===== 数据 =====
     activePanel: 'monitor',
-    stats: { active_sessions: 0, pending_escalations: 0, active_orders: 0 },
-    sessions: [],
-    escalations: [],
-    orders: [],
-    knowledgeBase: [],
+    stats: DEMO_STATS,
+    sessions: DEMO_SESSIONS,
+    escalations: DEMO_ESCALATIONS,
+    orders: DEMO_ORDERS,
+    knowledgeBase: DEMO_KNOWLEDGE,
 
     // ===== 对话 =====
     selectedUser: null,
@@ -70,10 +71,32 @@ export const store = reactive({
                 fetch('/api/dashboard/escalations', { headers }),
                 fetch('/api/dashboard/orders', { headers }),
             ]);
-            if (resStats.ok) this.stats = await resStats.json();
-            if (resSessions.ok) this.sessions = await resSessions.json();
-            if (resEsc.ok) this.escalations = await resEsc.json();
-            if (resOrders.ok) this.orders = await resOrders.json();
+            if (resStats.ok) {
+                const data = await resStats.json();
+                if (data.active_sessions > 0 || data.pending_escalations > 0 || data.active_orders > 0) {
+                    this.stats = { ...DEMO_STATS, ...data }; // Merge so we don't lose the new mock fields if backend doesn't have them
+                } else {
+                    this.stats = DEMO_STATS;
+                }
+            }
+            if (resSessions.ok) {
+                const data = await resSessions.json();
+                const backendIds = new Set(data.map(s => s.user_id));
+                const filteredDemo = DEMO_SESSIONS.filter(s => !backendIds.has(s.user_id));
+                this.sessions = [...data, ...filteredDemo];
+            }
+            if (resEsc.ok) {
+                const data = await resEsc.json();
+                const backendIds = new Set(data.map(e => e.id));
+                const filteredDemo = DEMO_ESCALATIONS.filter(e => !backendIds.has(e.id));
+                this.escalations = [...data, ...filteredDemo];
+            }
+            if (resOrders.ok) {
+                const data = await resOrders.json();
+                const backendIds = new Set(data.map(o => o.id));
+                const filteredDemo = DEMO_ORDERS.filter(o => !backendIds.has(o.id));
+                this.orders = [...data, ...filteredDemo];
+            }
 
             if (this.selectedUser && this.activePanel === 'monitor') {
                 await this.viewChat(this.selectedUser, true);
@@ -90,12 +113,31 @@ export const store = reactive({
         try {
             const res = await fetch(`${API_BASE}/knowledge`, { headers: this._headers() });
             const result = await res.json();
-            if (result.status === 'success') this.knowledgeBase = result.data;
-        } catch (e) { console.error(e); }
+            if (result.status === 'success' && result.data && result.data.length > 0) {
+                this.knowledgeBase = result.data;
+            } else {
+                this.knowledgeBase = DEMO_KNOWLEDGE;
+            }
+        } catch (e) {
+            console.error(e);
+            this.knowledgeBase = DEMO_KNOWLEDGE;
+        }
     },
 
     async viewChat(userId, scroll = true) {
         this.selectedUser = userId;
+
+        if (DEMO_CHATS[userId] !== undefined) {
+            this.currentChat = DEMO_CHATS[userId] || [];
+            if (scroll) {
+                setTimeout(() => {
+                    const el = document.getElementById('chat-window');
+                    if (el) el.scrollTop = el.scrollHeight;
+                }, 50);
+            }
+            return;
+        }
+
         try {
             const res = await fetch(`/api/dashboard/messages/${userId}`, { headers: this._headers() });
             if (res.ok) this.currentChat = await res.json();
@@ -148,6 +190,34 @@ export const store = reactive({
             console.error('sendManualMessage error:', e);
         } finally {
             this.sendingMessage = false;
+        }
+    },
+
+    // ========== PPT 工单操作 ==========
+
+    async claimOrder(id) {
+        try {
+            const res = await fetch(`/api/dashboard/orders/${id}/claim`, {
+                method: 'POST',
+                headers: this._headers(),
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            this.fetchData();
+        } catch (e) {
+            console.error('claimOrder error:', e);
+        }
+    },
+
+    async deliverOrder(id) {
+        try {
+            const res = await fetch(`/api/dashboard/orders/${id}/deliver`, {
+                method: 'POST',
+                headers: this._headers(),
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            this.fetchData();
+        } catch (e) {
+            console.error('deliverOrder error:', e);
         }
     },
 

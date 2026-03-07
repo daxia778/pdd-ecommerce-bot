@@ -2,10 +2,10 @@
 应用配置管理 - 使用 Pydantic Settings 从 .env 文件读取所有配置。
 
 P1-7 增强: 新增 rag_relevance_threshold 配置项（RAG 相关性阈值）
+P0-3 修复: 补充 deepseek_key_list / gemini_key_list 解析 property
 """
-from typing import List
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import field_validator
 
 
 class Settings(BaseSettings):
@@ -41,27 +41,57 @@ class Settings(BaseSettings):
     # ===== 数据库 =====
     db_url: str = "sqlite:///./data/sqlite/pdd_ecommerce.db"
     chroma_db_dir: str = "./data/chroma"
-    
+
     # ===== Redis / Queue =====
     redis_url: str = "redis://localhost:6379/0"
 
     # ===== Admin Auth =====
     admin_username: str = "admin"
     admin_password: str = "pddbot2026"
+    admin_password_hash: str = ""
+
+    # JWT 签名密钥（生产环境务必在 .env 中设置为随机长字符串）
+    jwt_secret_key: str = "dev-secret-key-change-in-prod"
+
+    # ===== CORS 配置 =====
+    # 逗号分隔的允许跨域来源；生产环境改为实际域名
+    cors_origins: str = "http://localhost:8100,http://127.0.0.1:8100,http://localhost:3000"
 
     # ===== 网络代理 =====
-
     http_proxy: str = ""
     https_proxy: str = ""
 
+    # ===== NotebookLM 自动化配置 =====
+    # 目标笔记本 URL（打开笔记本后复制地址栏 URL 填入 .env）
+    notebooklm_notebook_url: str = "https://notebooklm.google.com/"
+    # 本服务对外 URL（用于构造生成文件的下载链接）
+    pdd_bot_base_url: str = "http://localhost:8100"
+
     # ===== 解析后的 Key 列表 =====
     @property
-    def zhipu_key_list(self) -> List[str]:
+    def zhipu_key_list(self) -> list[str]:
         return [k.strip() for k in self.zhipu_api_keys.split(",") if k.strip()]
 
     @property
     def has_zhipu_keys(self) -> bool:
         return len(self.zhipu_key_list) > 0
+
+    # P0-3: 补充 DeepSeek & Gemini 的 Key 列表解析
+    @property
+    def deepseek_key_list(self) -> list[str]:
+        return [k.strip() for k in self.deepseek_api_keys.split(",") if k.strip()]
+
+    @property
+    def has_deepseek_keys(self) -> bool:
+        return len(self.deepseek_key_list) > 0
+
+    @property
+    def gemini_key_list(self) -> list[str]:
+        return [k.strip() for k in self.gemini_api_keys.split(",") if k.strip()]
+
+    @property
+    def has_gemini_keys(self) -> bool:
+        return len(self.gemini_key_list) > 0
 
 
 # 全局单例

@@ -1,19 +1,52 @@
+# ===== Python =====
 venv/
+.venv/
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.deepeval/
+
+# ===== 环境与密钥 =====
 .env
 .pdd_bot.pid
+
+# ===== 数据目录（本地生成，不入仓） =====
+data/sqlite/
+data/chroma/
+data/output/
 data/playwright_context/
-data/*.db
-data/*.sqlite
-data/*.json
+
+# ===== 日志 =====
 logs/*.log
-.DS_Store
+
+# ===== 前端 =====
 node_modules/
 dist/
 build/
 .next/
+
+# ===== 前端构建产物（由 CI 或 launch.sh 自动生成） =====
+static/admin/assets/
+static/admin/index.html
+
+# ===== IDE =====
 .vscode/
 .idea/
 *.swp
 *.bak
+*.swo
+*~
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+
+# ===== 归档目录（旧代码备份） =====
+_archived/
+
+# ===== 项目架构说明（自动生成） =====
+project_architecture.txt

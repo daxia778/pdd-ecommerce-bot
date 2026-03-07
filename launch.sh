@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ============================================================
-#   PDD 电商 AI 智能客服  —  专属启动器 v1
+#   PDD 电商 AI 智能客服  —  专属启动器 v2
 #   项目：pdd-e-commerce-bot（/Users/admin/Desktop/pdd-e-commerce-bot）
-#   服务：FastAPI + Uvicorn  (port 8000)
-#   用法：./launch.sh {start|stop|restart|status|log}
+#   服务：FastAPI + Uvicorn  (port 8100)
+#   用法：./launch.sh {start|stop|restart|status|log} [--no-build]
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -38,8 +38,8 @@ info() { echo -e "${C}  ℹ️  $*${N}"; }
 banner() {
   echo -e "${C}"
   echo "  ╔══════════════════════════════════════════════════╗"
-  echo "  ║  🛍️  PDD 电商 AI 智能客服  — 专属启动器 v1       ║"
-  echo "  ║  FastAPI + SQLite + RAG       port: ${PORT}        ║"
+  echo "  ║  🛍️  PDD 电商 AI 智能客服  — 专属启动器 v2       ║"
+  echo "  ║  FastAPI + SQLite + RAG + Vue 3   port: ${PORT}   ║"
   echo "  ╚══════════════════════════════════════════════════╝${N}"
   echo ""
 }
@@ -65,6 +65,53 @@ kill_pid_file() {
     kill -9 "$pid" &>/dev/null
     rm -f "$PID_FILE"
   fi
+}
+
+# ────────────────────────────────────────────────────────────
+# P2-2: 前端构建 (Vue3 → static/admin/)
+# ────────────────────────────────────────────────────────────
+build_frontend() {
+  local frontend_dir="$SCRIPT_DIR/frontend"
+  local built_html="$SCRIPT_DIR/static/admin/index.html"
+
+  # 如果没有 frontend 目录，静默跳过
+  if [[ ! -d "$frontend_dir" ]]; then
+    info "frontend 目录不存在，跳过前端构建。"
+    return 0
+  fi
+
+  # ⚡ 智能跳过：如果构建产物已存在且未指定 --rebuild，直接跳过
+  if [[ -f "$built_html" && "${2:-}" != "--rebuild" ]]; then
+    info "前端已构建（static/admin/index.html 存在），跳过构建。使用 --rebuild 强制重新构建。"
+    return 0
+  fi
+
+  # 检查 npm
+  if ! command -v npm &>/dev/null; then
+    warn "npm 未安装，跳过前端构建（请手动在 frontend/ 下执行 npm install && npm run build）"
+    return 0
+  fi
+
+  log "📦 前端构建开始 (Vue3 → static/admin/)..."
+  cd "$frontend_dir"
+
+  # 自动安装依赖（仅当 node_modules 不存在时）
+  if [[ ! -d "node_modules" ]]; then
+    info "node_modules 不存在，正在运行 npm install..."
+    if npm install --silent 2>&1 | tail -3; then
+      ok "npm install 完成"
+    else
+      warn "npm install 异常，尝试继续构建..."
+    fi
+  fi
+
+  # 执行构建（vite.config.js 已配置 outDir: '../static/admin')
+  if npm run build --silent 2>&1; then
+    ok "前端构建完成 → static/admin/"
+  else
+    warn "前端构建失败（可能是首次配置问题），继续启动后端服务..."
+  fi
+  cd "$SCRIPT_DIR"
 }
 
 # ────────────────────────────────────────────────────────────
@@ -103,9 +150,9 @@ start_bot() {
   echo $! > "$PID_FILE"
   log "进程已启动 (PID: $(cat "$PID_FILE"))，等待就绪..."
 
-  # 等待 API 就绪（最多 20 秒）
+  # 等待 API 就绪（最多 60 秒，RAG 模型首次加载可能需要 30-60s）
   echo -n "   健康检查"
-  for i in {1..20}; do
+  for i in {1..60}; do
     sleep 1; echo -n "."
     if api_healthy; then
       echo ""
@@ -117,12 +164,26 @@ start_bot() {
       echo -e "    健康检查      →  ${G}http://localhost:${PORT}/api/v1/health${N}"
       echo -e "    实时日志      →  ${C}tail -f $LOG_FILE${N}"
       echo ""
+      # 后台继续预热 RAG（非阻塞，不影响服务对外可用）
+      info "RAG 向量模型正在后台预热（约 30-60s），首次 AI 对话可能稍慢..."
+      echo ""
       return 0
+    fi
+    # 友好提示
+    if [[ $i -eq 10 ]]; then
+      echo ""
+      info "服务正在初始化数据库和 LLM 客户端..."
+      echo -n "   继续等待"
+    fi
+    if [[ $i -eq 25 ]]; then
+      echo ""
+      info "RAG 向量模型首次加载中（需下载约 400MB 模型，耐心等候）..."
+      echo -n "   继续等待"
     fi
   done
 
   echo ""
-  err "服务启动超时！请检查日志："
+  err "服务启动超时（60s）！请检查日志："
   tail -20 "$LOG_FILE"
   return 1
 }
@@ -215,6 +276,8 @@ open_admin() {
 case "${1:-start}" in
   start)
     banner
+    # --no-build 参数跳过前端构建
+    [[ "${2:-}" != "--no-build" ]] && build_frontend
     start_bot
     show_status
     ;;
@@ -227,6 +290,7 @@ case "${1:-start}" in
     stop_bot
     echo ""
     sleep 1
+    [[ "${2:-}" != "--no-build" ]] && build_frontend
     start_bot
     show_status
     ;;
@@ -245,15 +309,16 @@ case "${1:-start}" in
     ;;
   *)
     echo ""
-    echo -e "  ${W}用法:${N} ./launch.sh {start|stop|restart|status|admin|log|log-tail}"
+    echo -e "  ${W}用法:${N} ./launch.sh {start|stop|restart|status|admin|log|log-tail} [--no-build]"
     echo ""
-    echo "    start     启动服务"
-    echo "    stop      停止服务"
-    echo "    restart   重启服务"
-    echo "    status    查看服务状态"
-    echo "    admin     打开管理后台（浏览器）"
-    echo "    log       实时日志流"
-    echo "    log-tail  最近50行日志"
+    echo "    start         启动服务（自动构建前端）"
+    echo "    start --no-build  启动服务（跳过前端构建）"
+    echo "    stop          停止服务"
+    echo "    restart       重启服务"
+    echo "    status        查看服务状态"
+    echo "    admin         打开管理后台（浏览器）"
+    echo "    log           实时日志流"
+    echo "    log-tail      最近50行日志"
     echo ""
     exit 1
     ;;
