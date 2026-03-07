@@ -7,6 +7,8 @@ FastAPI 路由层 - 核心 API 端点：
 P1-6: /health 端点新增 LLM ping 探测，快速确认 LLM API 是否可用
 """
 
+from __future__ import annotations
+
 import hashlib
 import hmac
 import json

@@ -8,6 +8,8 @@
   - P1-1: 引入 Redis，增强扩展性与并发安全
 """
 
+from __future__ import annotations
+
 import asyncio
 
 from config.settings import settings

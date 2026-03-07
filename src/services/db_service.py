@@ -12,6 +12,8 @@ P0-3 修复: save_message_and_upsert_session 合并消息写入与会话 upsert 
 P0-5 修复: claim_escalation 使用新增的 claimed_at 字段，不再污染 resolved_at
 """
 
+from __future__ import annotations
+
 from datetime import date, datetime
 
 from sqlalchemy import func

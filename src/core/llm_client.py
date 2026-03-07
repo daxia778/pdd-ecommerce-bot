@@ -6,6 +6,8 @@ P0-1修复: 每次失败自动切换到下一个 Key，而非重试同一个 Key
 P1-1增强: 记录每次调用的响应时间（ms）到日志
 """
 
+from __future__ import annotations
+
 import asyncio
 import itertools
 import os

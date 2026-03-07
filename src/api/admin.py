@@ -8,6 +8,8 @@
 P1-5: list_escalations 支持 claimed 状态 Tab，返回 claimed_at / operator_name
 """
 
+from __future__ import annotations
+
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, status
