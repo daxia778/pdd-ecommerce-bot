@@ -9,6 +9,9 @@ export const store = reactive({
     token: localStorage.getItem('pdd_admin_token') || '',
     isLoggedIn: !!localStorage.getItem('pdd_admin_token'),
 
+    // ===== UI 状态 =====
+    sidebarCollapsed: localStorage.getItem('pdd_sidebar_collapsed') === 'true',
+
     // ===== 数据 =====
     activePanel: 'monitor',
     stats: DEMO_STATS,
