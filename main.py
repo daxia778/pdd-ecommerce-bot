@@ -63,23 +63,49 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ LLM 客户端初始化失败: {e}")
 
-    # P1-4: 安全校验 — 生产环境强制拦截弱 JWT 密钥
+    # P2-Root-Cause-Sweep: 综合安全门禁 — 检查所有敏感凭证
     _app_env = os.getenv("APP_ENV", "development").lower()
+    _is_prod = _app_env == "production"
+
+    # 收集所有安全隐患
+    _security_warnings: list[str] = []
+
+    # 1. JWT 密钥检查
     _jwt_key = getattr(settings, "jwt_secret_key", "")
-    _jwt_is_weak = not _jwt_key or _jwt_key == "dev-secret-key-change-in-prod" or len(_jwt_key) < 32
-    if _jwt_is_weak:
-        if _app_env == "production":
-            # 生产环境：硬性拦截，阻止服务以不安全状态启动
-            raise SystemExit(
-                "❌ [FATAL] 生产环境禁止使用弱 JWT 密钥！\n"
-                "   请在 .env 中设置不少于 32 字符的随机字符串：\n"
-                "   JWT_SECRET_KEY=$(openssl rand -hex 32)"
-            )
+    if not _jwt_key or _jwt_key == "dev-secret-key-change-in-prod" or len(_jwt_key) < 32:
+        _security_warnings.append(
+            "JWT_SECRET_KEY 使用了默认开发密钥（长度不足 32 字符）。请设置: JWT_SECRET_KEY=$(openssl rand -hex 32)"
+        )
+
+    # 2. 管理员密码检查
+    _admin_pwd = getattr(settings, "admin_password", "")
+    _weak_passwords = {"admin", "password", "123456", "pddbot2026", "admin123", ""}
+    if _admin_pwd in _weak_passwords or len(_admin_pwd) < 8:
+        _security_warnings.append("ADMIN_PASSWORD 使用了弱密码或默认密码。请设置不少于 8 字符的强密码。")
+
+    # 3. PDD Webhook 签名密钥检查（仅在配置了 PDD 密钥时提醒）
+    if settings.pdd_app_key and not settings.pdd_webhook_secret:
+        _security_warnings.append("PDD_WEBHOOK_SECRET 为空，Webhook 签名校验已禁用。建议配置以防止伪造请求。")
+
+    # 4. CORS 配置检查
+    _cors_origins = settings.cors_origins
+    if "*" in _cors_origins:
+        _security_warnings.append("CORS_ORIGINS 包含通配符 '*'，允许所有来源跨域访问。生产环境请改为实际域名列表。")
+
+    # 输出安全报告
+    if _security_warnings:
+        if _is_prod:
+            # 生产环境：致命错误，阻止服务启动
+            msg = "❌ [FATAL] 生产环境安全检查未通过！\n"
+            for i, w in enumerate(_security_warnings, 1):
+                msg += f"   {i}. {w}\n"
+            msg += "   请在 .env 中配置上述选项后重新启动。"
+            raise SystemExit(msg)
         else:
-            logger.warning(
-                "⚠️  JWT_SECRET_KEY 使用了默认开发密钥（长度不足或未配置）。"
-                "部署到生产前请在 .env 设置强密钥，否则 API Token 存在伪造风险！"
-            )
+            # 开发环境：逐条警告
+            logger.warning("⚠️  安全配置检查发现以下隐患（开发环境允许启动）：")
+            for w in _security_warnings:
+                logger.warning(f"   ⚠️  {w}")
 
     # 预热 RAG 模型（后台异步，避免第一个用户请求超时）
     async def _prewarm_rag():
@@ -208,8 +234,9 @@ async def api_root():
 async def global_exception_handler(request: Request, exc: Exception):
     """
     全局异常拦截：防止未处理异常导致进程崩溃或服务假死。
-    P0-Fix-1: 显式放行框架级异常（HTTPException / RequestValidationError），
-    避免将 401/404/422 等误转为 500。
+
+    P0-Fix-1: 显式放行框架级异常（HTTPException / RequestValidationError）。
+    P2-Root-Cause-Sweep: 增强结构化日志，记录请求上下文以加速排错。
     """
     from fastapi.exceptions import RequestValidationError
     from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -218,7 +245,15 @@ async def global_exception_handler(request: Request, exc: Exception):
     if isinstance(exc, HTTPException | StarletteHTTPException | RequestValidationError):
         raise exc
 
-    logger.error(f"全局未捕获异常 | URI: {request.url.path} | 错误: {exc}", exc_info=True)
+    # P2-Root-Cause-Sweep: 结构化异常日志
+    client_ip = request.client.host if request.client else "unknown"
+    logger.error(
+        f"全局未捕获异常 | {request.method} {request.url.path} | "
+        f"Client: {client_ip} | "
+        f"Type: {type(exc).__name__} | "
+        f"Detail: {exc}",
+        exc_info=True,
+    )
     return JSONResponse(
         status_code=500,
         content={"status": "error", "message": "服务器内部未知错误，已记录"},
