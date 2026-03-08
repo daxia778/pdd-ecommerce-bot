@@ -442,10 +442,25 @@ const filterTabs = [
 
 const currentPage = ref(1);
 const ITEMS_PER_PAGE = 10;
+let _searchDebounceTimer = null;
 
-// Reset page when filter or search changes
-watch([searchQuery, sessionFilter], () => {
+// Reset page when filter changes
+watch(sessionFilter, () => {
   currentPage.value = 1;
+});
+
+// Debounced global search: calls backend API
+watch(searchQuery, (newQ) => {
+  currentPage.value = 1;
+  if (_searchDebounceTimer) clearTimeout(_searchDebounceTimer);
+  if (!newQ || !newQ.trim()) {
+    store.searchMatchedUserIds = [];
+    return;
+  }
+  // 200ms debounce for responsive feel
+  _searchDebounceTimer = setTimeout(() => {
+    store.searchMessages(newQ.trim());
+  }, 200);
 });
 
 const filteredSessions = computed(() => {
@@ -458,23 +473,16 @@ const filteredSessions = computed(() => {
     list = list.filter(s => !store.pausedSessions[s.user_id]);
   }
 
-  // 搜索过滤（支持全站即时模糊搜索）
+  // 搜索过滤（通过后端 API 全局搜索）
   if (searchQuery.value.trim()) {
     const q = searchQuery.value.trim().toLowerCase();
+    // 后端返回的匹配 user_id 列表
+    const backendMatched = new Set(store.searchMatchedUserIds || []);
     list = list.filter(s => {
-      // 1. 匹配用户名
+      // 1. 后端全局搜索命中
+      if (backendMatched.has(s.user_id)) return true;
+      // 2. 本地用户名匹配（秒级快速响应）
       if (formatUserId(s.user_id).toLowerCase().includes(q)) return true;
-      // 2. 匹配平台名
-      if ((s.platform || '').toLowerCase().includes(q)) return true;
-
-      // 3. 匹配消息记录（深入 store.currentChat 或后端拉取的最后一条消息）
-      // 由于前端只有点选的用户才拉完整记录，我们只能在当前已拉取的局部或最新消息内搜索，或者交由后端/API处理
-      // 暂且在已知数据内尽力匹配
-      if (store.selectedUser === s.user_id && store.currentChat) {
-         if (store.currentChat.some(msg => msg.content && msg.content.toLowerCase().includes(q))) {
-             return true;
-         }
-      }
       return false;
     });
   }
@@ -560,61 +568,75 @@ const getConfidence = (key) => {
 const isExtracting = ref(false);
 const extractProgress = ref(0);
 
-// Watch selected user changes to reset local form data
-watch(() => store.selectedUser, (newVal) => {
-  // Reset extraction whenever the user changes (or when a new message resets UI state)
+// Watch selected user to load requirements from backend or demo data
+watch(() => store.selectedUser, async (newVal) => {
   isExtracting.value = false;
   extractProgress.value = 0;
 
   if (newVal && MOCK_REQUIREMENTS[newVal]) {
+    // Demo data: use local mock
     const data = MOCK_REQUIREMENTS[newVal];
-    // Copy data
     Object.keys(localReqData).forEach(k => {
       localReqData[k] = data[k] || '-';
     });
+  } else if (newVal) {
+    // Real user: try extracting from backend
+    Object.keys(localReqData).forEach(k => localReqData[k] = '');
+    await triggerExtraction(newVal);
   } else {
-    // Clear
     Object.keys(localReqData).forEach(k => localReqData[k] = '');
   }
 });
 
-// Watch currentChat changes to conditionally trigger re-extraction
-watch(() => store.currentChat, (newVal, oldVal) => {
-    // If new messages come in, mark for re-extraction if not already extracting
-    if (!isExtracting.value && newVal.length > 0 && (!oldVal || newVal.length > oldVal.length)) {
-       // Only flash the extraction state briefly as a UX cue
-       isExtracting.value = true;
-       extractProgress.value = 50;
-       setTimeout(() => {
-           extractProgress.value = 100;
-           setTimeout(() => {
-               isExtracting.value = false;
-           }, 200);
-       }, 500);
+// Watch currentChat changes to re-extract requirements from backend
+let _lastChatLen = 0;
+watch(() => store.currentChat, async (newVal) => {
+    if (!store.selectedUser) return;
+    // Only re-extract when new messages arrive (not on initial load)
+    if (newVal && newVal.length > _lastChatLen && _lastChatLen > 0) {
+        // Don't re-extract for demo users
+        if (!MOCK_REQUIREMENTS[store.selectedUser]) {
+            await triggerExtraction(store.selectedUser);
+        }
     }
+    _lastChatLen = newVal ? newVal.length : 0;
 }, { deep: true });
 
-const simulateExtracting = () => {
+async function triggerExtraction(userId) {
     isExtracting.value = true;
-    extractProgress.value = 0;
+    extractProgress.value = 20;
 
-    // Simulate progress
-    const interval = setInterval(() => {
-        extractProgress.value += Math.floor(Math.random() * 15) + 5;
-        if (extractProgress.value >= 100) {
-            extractProgress.value = 100;
-            clearInterval(interval);
-
-            // Auto-fill some data based on chat history if possible, else random
-            setTimeout(() => {
-                localReqData.topic = '基于历史：商务合作计划书';
-                localReqData.pages = '约 20 页';
-                localReqData.style = '待确认';
-                localReqData.deadline = '本周五';
-                isExtracting.value = false; // complete
-            }, 400);
+    // Animate progress while waiting for backend
+    const progressInterval = setInterval(() => {
+        if (extractProgress.value < 90) {
+            extractProgress.value += Math.floor(Math.random() * 10) + 3;
         }
-    }, 300);
+    }, 200);
+
+    try {
+        const data = await store.extractRequirements(userId);
+        extractProgress.value = 100;
+
+        if (data && data.source !== 'none') {
+            // Fill local form with extracted data
+            Object.keys(localReqData).forEach(k => {
+                if (data[k]) localReqData[k] = data[k];
+            });
+        }
+    } catch (e) {
+        console.error('Extraction failed:', e);
+    } finally {
+        clearInterval(progressInterval);
+        setTimeout(() => {
+            isExtracting.value = false;
+        }, 300);
+    }
+}
+
+const simulateExtracting = async () => {
+    if (store.selectedUser) {
+        await triggerExtraction(store.selectedUser);
+    }
 };
 
 const handleFieldEdit = ({ key, value }) => {

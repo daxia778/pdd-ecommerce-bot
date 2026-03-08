@@ -154,6 +154,55 @@ export const store = reactive({
         } catch (e) { console.error(e); }
     },
 
+    // ========== 全局搜索 ==========
+    searchMatchedUserIds: [],  // 后端搜索返回的 user_id 列表
+    searchLoading: false,
+
+    async searchMessages(q) {
+        if (!q || !q.trim()) {
+            this.searchMatchedUserIds = [];
+            return;
+        }
+        this.searchLoading = true;
+        try {
+            const res = await fetch(`/api/dashboard/search?q=${encodeURIComponent(q.trim())}`, {
+                headers: this._headers(),
+            });
+            if (res.ok) {
+                const data = await res.json();
+                this.searchMatchedUserIds = data.matched_user_ids || [];
+            }
+        } catch (e) {
+            console.error('searchMessages error:', e);
+        } finally {
+            this.searchLoading = false;
+        }
+    },
+
+    // ========== 需求提取 ==========
+    extractedRequirements: {},  // { user_id: { topic, pages, ... } }
+    extractingUser: null,
+
+    async extractRequirements(userId) {
+        if (!userId) return null;
+        this.extractingUser = userId;
+        try {
+            const res = await fetch(`/api/dashboard/messages/${userId}/extract_requirements`, {
+                headers: this._headers(),
+            });
+            if (res.ok) {
+                const data = await res.json();
+                this.extractedRequirements[userId] = data;
+                return data;
+            }
+        } catch (e) {
+            console.error('extractRequirements error:', e);
+        } finally {
+            this.extractingUser = null;
+        }
+        return null;
+    },
+
     // ========== Shadow Chat ==========
 
     async togglePause(userId) {

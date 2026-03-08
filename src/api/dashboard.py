@@ -206,6 +206,118 @@ async def get_messages(user_id: str, db: DBSession = Depends(get_db)):
     ]
 
 
+@router.get("/api/dashboard/search")
+async def search_messages(q: str = Query("", min_length=1), db: DBSession = Depends(get_db)):
+    """
+    全局搜索：在所有会话的消息内容中搜索关键词，返回匹配的 user_id 列表。
+    性能: SQLite LIKE 查询 + DISTINCT，适合中小规模数据。
+    """
+
+    def _search(db_session: DBSession):
+        from sqlalchemy import distinct
+
+        keyword = f"%{q}%"
+        # 搜索消息内容
+        matched_users_from_messages = (
+            db_session.query(distinct(Message.user_id)).filter(Message.content.like(keyword)).all()
+        )
+        # 搜索用户名本身
+        matched_users_from_sessions = (
+            db_session.query(distinct(Session.user_id)).filter(Session.user_id.like(keyword)).all()
+        )
+        # 合并去重
+        all_ids = set()
+        for (uid,) in matched_users_from_messages:
+            all_ids.add(uid)
+        for (uid,) in matched_users_from_sessions:
+            all_ids.add(uid)
+        return list(all_ids)
+
+    matched_user_ids = await run_in_db_thread(_search, db)
+    return {"matched_user_ids": matched_user_ids, "count": len(matched_user_ids)}
+
+
+@router.get("/api/dashboard/messages/{user_id}/extract_requirements")
+async def extract_requirements(user_id: str, db: DBSession = Depends(get_db)):
+    """
+    从指定用户的对话中提取结构化需求信息。
+    优先从 AI 生成的 [[CREATE_ORDER:...]] 标记中解析；
+    若无标记，则从对话上下文中基于关键词启发式提取。
+    """
+    import json
+    import re
+
+    def _get_all_messages(db_session: DBSession):
+        return db_session.query(Message).filter(Message.user_id == user_id).order_by(Message.created_at).all()
+
+    messages = await run_in_db_thread(_get_all_messages, db)
+    all_content = " ".join([m.content for m in messages])
+
+    result = {
+        "topic": "",
+        "pages": "",
+        "style": "",
+        "deadline": "",
+        "budget": "",
+        "audience": "",
+        "outline": "",
+        "assets": "",
+        "source": "none",  # 'order_token' | 'heuristic' | 'none'
+    }
+
+    # 1. 优先从 [[CREATE_ORDER:...]] 提取
+    order_match = re.search(r"\[\[CREATE_ORDER:(.*?)\]\]", all_content, re.DOTALL)
+    if order_match:
+        try:
+            raw = order_match.group(1).strip()
+            data = json.loads(raw)
+            result["topic"] = data.get("topic", "")
+            result["pages"] = str(data.get("pages", ""))
+            result["style"] = data.get("style", "")
+            result["deadline"] = data.get("deadline", "")
+            result["budget"] = str(data.get("budget", ""))
+            result["audience"] = data.get("audience", "")
+            result["outline"] = data.get("outline", data.get("details", ""))
+            result["assets"] = data.get("assets", "")
+            result["source"] = "order_token"
+            return result
+        except Exception:
+            pass
+
+    # 2. 启发式关键词提取
+    # 页数
+    pages_m = re.search(r"(\d+)\s*[页pP]", all_content)
+    if pages_m:
+        result["pages"] = f"{pages_m.group(1)}页"
+    # 主题
+    topic_keywords = ["计划书", "汇报", "方案", "PPT", "报告", "总结", "投标", "答辩", "展示", "培训"]
+    for kw in topic_keywords:
+        if kw in all_content:
+            # 取关键词前后20字作为主题
+            idx = all_content.index(kw)
+            start = max(0, idx - 10)
+            end = min(len(all_content), idx + len(kw) + 10)
+            result["topic"] = all_content[start:end].strip()
+            break
+    # 风格
+    style_keywords = ["商务", "学术", "简约", "科技", "高端", "创投", "正规", "现代"]
+    for kw in style_keywords:
+        if kw in all_content:
+            result["style"] = kw
+            break
+    # 时间
+    deadline_keywords = ["明天", "后天", "本周", "下周", "月底", "紧急", "加急", "尽快", "马上"]
+    for kw in deadline_keywords:
+        if kw in all_content:
+            result["deadline"] = kw
+            break
+
+    if any(result[k] for k in ["topic", "pages", "style", "deadline"]):
+        result["source"] = "heuristic"
+
+    return result
+
+
 @router.get("/api/dashboard/escalations")
 async def get_escalations(db: DBSession = Depends(get_db)):
     """获取需要人工处理的升级记录"""
