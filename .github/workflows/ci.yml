@@ -79,6 +79,8 @@ jobs:
           DB_URL: "sqlite:///:memory:"
           ZHIPU_API_KEYS: "test-key-for-ci"
           LLM_PROVIDER: "zhipu"
+          ADMIN_PASSWORD: "admin888"
+          JWT_SECRET_KEY: "ci-test-secret-key-not-for-production"
 
       - name: Run Integration Tests (test_api.py)
         run: python -m pytest tests/test_api.py -v --tb=short
@@ -86,6 +88,8 @@ jobs:
           DB_URL: "sqlite:///:memory:"
           ZHIPU_API_KEYS: "test-key-for-ci"
           LLM_PROVIDER: "zhipu"
+          ADMIN_PASSWORD: "admin888"
+          JWT_SECRET_KEY: "ci-test-secret-key-not-for-production"
         continue-on-error: true
 
       - name: Upload Coverage Report
