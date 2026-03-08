@@ -9,7 +9,7 @@
             实时对话队列
           </h2>
           <span class="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-semibold">
-            {{ filteredSessions.length }}/{{ store.sessions.length }}
+            {{ store.sessions.length }}
           </span>
         </div>
 
@@ -44,7 +44,7 @@
 
         <div class="flex-1 overflow-y-auto p-2 space-y-2 chat-scroll">
           <div
-            v-for="session in filteredSessions"
+            v-for="session in paginatedSessions"
             :key="session.user_id"
             @click="selectUser(session.user_id)"
             :class="[
@@ -80,10 +80,33 @@
               <span>{{ (session.updated_at || '').split(' ')[1] }}</span>
             </div>
           </div>
-          <div v-if="filteredSessions.length === 0" class="flex flex-col items-center justify-center h-40 text-gray-400 font-medium">
+          <div v-if="paginatedSessions.length === 0" class="flex flex-col items-center justify-center h-40 text-gray-400 font-medium">
             <svg class="w-10 h-10 mb-2 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
             <p class="text-xs">{{ searchQuery ? '无匹配结果' : '暂无活跃对话' }}</p>
           </div>
+        </div>
+
+        <!-- Pagination Controls -->
+        <div v-if="totalPages > 1" class="p-2 border-t flex justify-between items-center bg-gray-50/50">
+          <button
+            @click="currentPage = Math.max(1, currentPage - 1)"
+            :disabled="currentPage === 1"
+            class="p-1 rounded text-gray-400 hover:text-gray-700 hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+          </button>
+
+          <span class="text-[10px] font-bold text-gray-500">
+            {{ currentPage }} / {{ totalPages }} 页
+          </span>
+
+          <button
+            @click="currentPage = Math.min(totalPages, currentPage + 1)"
+            :disabled="currentPage === totalPages"
+            class="p-1 rounded text-gray-400 hover:text-gray-700 hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </button>
         </div>
       </div>
     </div>
@@ -95,8 +118,8 @@
         <!-- Chat Header — with AI Pause toggle -->
         <div v-if="store.selectedUser" class="p-4 border-b bg-gray-50 flex items-center justify-between gap-3">
           <div class="flex items-center gap-3">
-            <div :class="['w-10 h-10 rounded-xl flex items-center justify-center text-white font-black text-lg shadow-lg ring-2 ring-white', getAvatarGradient(store.selectedUser)]">
-              {{ formatUserId(store.selectedUser).slice(0, 1).toUpperCase() }}
+            <div :class="['w-10 h-10 rounded-xl flex items-center justify-center text-white font-black shadow-lg ring-2 ring-white', extractChineseName(formatUserId(store.selectedUser)).length > 1 ? 'text-sm' : 'text-lg', getAvatarGradient(store.selectedUser)]">
+              {{ extractChineseName(formatUserId(store.selectedUser)) }}
             </div>
             <div>
               <p class="font-bold text-gray-800 text-sm">{{ formatUserId(store.selectedUser) }}</p>
@@ -417,6 +440,14 @@ const filterTabs = [
   { id: 'manual', name: '人工接管' },
 ];
 
+const currentPage = ref(1);
+const ITEMS_PER_PAGE = 10;
+
+// Reset page when filter or search changes
+watch([searchQuery, sessionFilter], () => {
+  currentPage.value = 1;
+});
+
 const filteredSessions = computed(() => {
   let list = store.sessions;
 
@@ -427,16 +458,35 @@ const filteredSessions = computed(() => {
     list = list.filter(s => !store.pausedSessions[s.user_id]);
   }
 
-  // 搜索过滤
+  // 搜索过滤（支持全站即时模糊搜索）
   if (searchQuery.value.trim()) {
     const q = searchQuery.value.trim().toLowerCase();
-    list = list.filter(s =>
-      formatUserId(s.user_id).toLowerCase().includes(q) ||
-      (s.platform || '').toLowerCase().includes(q)
-    );
+    list = list.filter(s => {
+      // 1. 匹配用户名
+      if (formatUserId(s.user_id).toLowerCase().includes(q)) return true;
+      // 2. 匹配平台名
+      if ((s.platform || '').toLowerCase().includes(q)) return true;
+
+      // 3. 匹配消息记录（深入 store.currentChat 或后端拉取的最后一条消息）
+      // 由于前端只有点选的用户才拉完整记录，我们只能在当前已拉取的局部或最新消息内搜索，或者交由后端/API处理
+      // 暂且在已知数据内尽力匹配
+      if (store.selectedUser === s.user_id && store.currentChat) {
+         if (store.currentChat.some(msg => msg.content && msg.content.toLowerCase().includes(q))) {
+             return true;
+         }
+      }
+      return false;
+    });
   }
 
   return list;
+});
+
+const totalPages = computed(() => Math.ceil(filteredSessions.value.length / ITEMS_PER_PAGE));
+
+const paginatedSessions = computed(() => {
+  const start = (currentPage.value - 1) * ITEMS_PER_PAGE;
+  return filteredSessions.value.slice(start, start + ITEMS_PER_PAGE);
 });
 
 // 根据用户名 hash 选择渐变色
@@ -466,6 +516,20 @@ const formatUserId = (id) => {
         return '测试买家_' + id.replace('demo_buyer_', '');
     }
     return id;
+};
+
+// 提取纯中文字符用于头像显示（最多2个字）
+const extractChineseName = (name) => {
+    if (!name) return '客';
+    // 匹配所有中文字符
+    const chineseChars = name.match(/[\u4e00-\u9fa5]/g);
+    if (chineseChars && chineseChars.length > 0) {
+        return chineseChars.slice(0, 2).join('');
+    }
+    // 如果没有中文，退回取前两大写字母缩写
+    const cleanEn = name.replace(/[^a-zA-Z]/g, '');
+    if (cleanEn) return cleanEn.slice(0, 2).toUpperCase();
+    return name.slice(0, 1).toUpperCase() || '客';
 };
 
 const isPaused = computed(() =>
@@ -498,6 +562,7 @@ const extractProgress = ref(0);
 
 // Watch selected user changes to reset local form data
 watch(() => store.selectedUser, (newVal) => {
+  // Reset extraction whenever the user changes (or when a new message resets UI state)
   isExtracting.value = false;
   extractProgress.value = 0;
 
@@ -512,6 +577,22 @@ watch(() => store.selectedUser, (newVal) => {
     Object.keys(localReqData).forEach(k => localReqData[k] = '');
   }
 });
+
+// Watch currentChat changes to conditionally trigger re-extraction
+watch(() => store.currentChat, (newVal, oldVal) => {
+    // If new messages come in, mark for re-extraction if not already extracting
+    if (!isExtracting.value && newVal.length > 0 && (!oldVal || newVal.length > oldVal.length)) {
+       // Only flash the extraction state briefly as a UX cue
+       isExtracting.value = true;
+       extractProgress.value = 50;
+       setTimeout(() => {
+           extractProgress.value = 100;
+           setTimeout(() => {
+               isExtracting.value = false;
+           }, 200);
+       }, 500);
+    }
+}, { deep: true });
 
 const simulateExtracting = () => {
     isExtracting.value = true;
