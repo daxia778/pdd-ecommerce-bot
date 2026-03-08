@@ -11,7 +11,8 @@ from sqlalchemy import desc, func
 from sqlalchemy.orm import Session as DBSession
 
 from src.api.websocket_manager import manager
-from src.models.database import Escalation, Message, Order, Session, get_db
+from src.models.database import Escalation, Message, Order, Session, get_db, run_in_db_thread
+from src.models.enums import EscalationStatus, OrderStatus, SessionStatus
 from src.services import db_service
 from src.services.pdd_api_client import pdd_api_client
 from src.utils.auth import JWT_ALGORITHM, JWT_SECRET_KEY, verify_admin
@@ -52,7 +53,7 @@ async def websocket_endpoint(
             # 保持连接活跃，等待服务端推送
             await websocket.receive_text()
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        await manager.disconnect(websocket)
 
 
 # 模板目录路径
@@ -75,12 +76,16 @@ async def dashboard_page(request: Request):
 @alru_cache(maxsize=1, ttl=5)
 async def _get_stats_cached(db: DBSession):
     """P0.2: 统计防穿透微缓存 (TTL 5s) - 补充完整字段"""
-    active_sessions = db.query(Session).filter(Session.status == "active").count()
-    pending_escalations = db.query(Escalation).filter(Escalation.status == "pending").count()
-    active_orders = db.query(Order).filter(Order.status.in_(["generating", "processing", "awaiting_review"])).count()
+    active_sessions = db.query(Session).filter(Session.status == SessionStatus.ACTIVE).count()
+    pending_escalations = db.query(Escalation).filter(Escalation.status == EscalationStatus.PENDING).count()
+    active_orders = (
+        db.query(Order)
+        .filter(Order.status.in_([OrderStatus.GENERATING, OrderStatus.PROCESSING, OrderStatus.AWAITING_REVIEW]))
+        .count()
+    )
 
     # 1. 订单统计
-    shipped_orders = db.query(Order).filter(Order.status == "shipped").count()
+    shipped_orders = db.query(Order).filter(Order.status == OrderStatus.SHIPPED).count()
     total_orders = db.query(Order).count()  # 历史订单总数，供看板展示
 
     # 2. 成单转化率：已交付订单 / 总会话数（取最大值避免除零）
@@ -184,7 +189,10 @@ async def get_messages(user_id: str, db: DBSession = Depends(get_db)):
 async def get_escalations(db: DBSession = Depends(get_db)):
     """获取需要人工处理的升级记录"""
     escalations = (
-        db.query(Escalation).filter(Escalation.status == "pending").order_by(desc(Escalation.created_at)).all()
+        db.query(Escalation)
+        .filter(Escalation.status == EscalationStatus.PENDING)
+        .order_by(desc(Escalation.created_at))
+        .all()
     )
     return [
         {
@@ -219,8 +227,7 @@ async def get_orders(status: str | None = None, show_all: bool = False, db: DBSe
     if status:
         q = q.filter(Order.status == status)
     elif not show_all:
-        # 默认过滤掉已完成的，只显示待处理和处理中
-        q = q.filter(Order.status.in_(["req_fixed", "processing", "awaiting_review"]))
+        q = q.filter(Order.status.in_([OrderStatus.REQ_FIXED, OrderStatus.PROCESSING, OrderStatus.AWAITING_REVIEW]))
     orders = q.order_by(desc(Order.created_at)).limit(50).all()
     return [
         {
@@ -240,10 +247,17 @@ async def get_orders(status: str | None = None, show_all: bool = False, db: DBSe
 @router.post("/api/dashboard/orders/{order_id}/approve")
 async def approve_order(order_id: int, db: DBSession = Depends(get_db)):
     """人工批准发货（原有接口，兼容保留）"""
-    order = db.query(Order).filter(Order.id == order_id).first()
+
+    # P0-Root-Cause-Sweep: 将同步 DB 操作卸载到线程池
+    def _approve(db_session: DBSession):
+        order = db_session.query(Order).filter(Order.id == order_id).first()
+        if order:
+            order.status = OrderStatus.SHIPPED
+            db_session.commit()
+        return order
+
+    order = await run_in_db_thread(_approve, db)
     if order:
-        order.status = "shipped"
-        db.commit()
         mall_id = getattr(order, "mall_id", "default_mall_id")
         await pdd_api_client.send_file_message(mall_id, order.user_id, order.clean_file_url)
         await manager.broadcast({"event": "update", "action": "approve_order"})
@@ -254,13 +268,21 @@ async def approve_order(order_id: int, db: DBSession = Depends(get_db)):
 @router.post("/api/dashboard/orders/{order_id}/claim")
 async def claim_order(order_id: int, db: DBSession = Depends(get_db)):
     """人工接单：将工单状态从 req_fixed → processing"""
-    order = db.query(Order).filter(Order.id == order_id).first()
-    if not order:
-        return {"status": "error", "msg": "工单不存在"}
-    if order.status != "req_fixed":
-        return {"status": "error", "msg": f"当前状态 [{order.status}] 不可接单"}
-    order.status = "processing"
-    db.commit()
+
+    # P0-Root-Cause-Sweep: 将同步 DB 操作卸载到线程池
+    def _claim(db_session: DBSession):
+        order = db_session.query(Order).filter(Order.id == order_id).first()
+        if not order:
+            return None, "工单不存在"
+        if order.status != OrderStatus.REQ_FIXED:
+            return None, f"当前状态 [{order.status}] 不可接单"
+        order.status = OrderStatus.PROCESSING
+        db_session.commit()
+        return order, None
+
+    order, err = await run_in_db_thread(_claim, db)
+    if err:
+        return {"status": "error", "msg": err}
     await manager.broadcast({"event": "update", "action": "order_claimed", "order_id": order_id})
     return {"status": "success", "order_sn": order.order_sn}
 
@@ -268,12 +290,20 @@ async def claim_order(order_id: int, db: DBSession = Depends(get_db)):
 @router.post("/api/dashboard/orders/{order_id}/deliver")
 async def deliver_order(order_id: int, db: DBSession = Depends(get_db)):
     """标记已交付：将工单状态从 processing → shipped（人工生成PPT后手动交付）"""
-    order = db.query(Order).filter(Order.id == order_id).first()
-    if not order:
-        return {"status": "error", "msg": "工单不存在"}
-    if order.status not in ("processing", "awaiting_review"):
-        return {"status": "error", "msg": f"当前状态 [{order.status}] 不可标记交付"}
-    order.status = "shipped"
-    db.commit()
+
+    # P0-Root-Cause-Sweep: 将同步 DB 操作卸载到线程池
+    def _deliver(db_session: DBSession):
+        order = db_session.query(Order).filter(Order.id == order_id).first()
+        if not order:
+            return None, "工单不存在"
+        if order.status not in (OrderStatus.PROCESSING, OrderStatus.AWAITING_REVIEW):
+            return None, f"当前状态 [{order.status}] 不可标记交付"
+        order.status = OrderStatus.SHIPPED
+        db_session.commit()
+        return order, None
+
+    order, err = await run_in_db_thread(_deliver, db)
+    if err:
+        return {"status": "error", "msg": err}
     await manager.broadcast({"event": "update", "action": "order_delivered", "order_id": order_id})
     return {"status": "success", "order_sn": order.order_sn}
