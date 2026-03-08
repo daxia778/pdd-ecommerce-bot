@@ -102,12 +102,47 @@
                  </div>
               </div>
 
-              <div class="pt-8 border-t border-gray-100 flex justify-end gap-4 mt-4">
-                  <button @click="requestNotification" class="px-6 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-xl text-sm font-bold hover:bg-gray-50 transition-all shadow-sm hover:shadow active:scale-95">
+              <hr class="border-gray-100" />
+
+              <!-- L2 Prompt 动态外挂配置 (全屏宽) -->
+              <div>
+                  <div class="flex justify-between items-end mb-4">
+                      <div>
+                          <h3 class="text-sm font-bold text-gray-700 border-l-4 border-green-500 pl-3">AI 话术规则配置 (Prompt YAML)</h3>
+                          <p class="text-xs text-gray-400 mt-1 mb-0 pl-4">在线编辑 YAML 格式的 Prompt 提示词外挂，保存后立即热重载生效。</p>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <button @click="store.loadPrompt('ppt_consultant')" :disabled="store.promptLoading"
+                          class="px-3 py-1.5 bg-gray-50 border border-gray-200 text-gray-600 rounded-lg text-xs font-bold hover:bg-gray-100 transition-all flex items-center gap-1">
+                          <span v-if="store.promptLoading" class="animate-spin text-[10px]">↻</span>
+                          <span v-else class="text-[10px]">↻</span>
+                          刷新远程
+                        </button>
+                        <button @click="store.savePrompt('ppt_consultant')" :disabled="store.promptSaving"
+                          class="px-4 py-1.5 bg-green-600 text-white rounded-lg text-xs font-bold hover:bg-green-700 transition-all flex items-center gap-1.5 shadow-sm shadow-green-100">
+                          <span v-if="store.promptSaving" class="animate-spin text-[10px]">↻</span>
+                          <span v-else>💾</span>
+                          保存热更新
+                        </button>
+                      </div>
+                  </div>
+                  <div class="relative bg-[#1e1e1e] rounded-xl overflow-hidden shadow-inner border border-gray-800">
+                      <div class="flex items-center justify-between px-4 py-2 bg-[#2d2d2d] border-b border-black/50">
+                           <span class="text-[10px] font-mono font-bold text-gray-300 flex items-center gap-1.5"><svg class="w-3 h-3 text-yellow-500" fill="currentColor" viewBox="0 0 20 20"><path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"></path></svg> data/prompts/ppt_consultant.yaml</span>
+                           <span class="text-[9px] font-bold text-green-400 uppercase tracking-widest px-2 py-0.5 bg-green-900/30 rounded ring-1 ring-green-500/30">L2 热重载生效中</span>
+                      </div>
+                      <textarea
+                          v-model="store.promptContent"
+                          spellcheck="false"
+                          placeholder="Loading prompt YAML..."
+                          class="w-full h-[400px] bg-transparent text-gray-300 font-mono text-xs px-5 py-4 focus:outline-none resize-y leading-loose border-none focus:ring-0 custom-scrollbar"
+                      ></textarea>
+                  </div>
+              </div>
+
+              <div class="pt-8 border-t border-gray-100 flex justify-end gap-3 mt-4">
+                  <button @click="requestNotification" class="px-6 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl text-sm font-bold hover:bg-gray-50 transition-all shadow-sm">
                       🔔 开启桌面通知
-                  </button>
-                  <button class="px-8 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-black transition-all shadow-md hover:shadow-lg active:scale-95 border border-gray-800">
-                      保存系统配置
                   </button>
               </div>
           </div>
@@ -116,9 +151,14 @@
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { ref, onMounted } from 'vue';
+import { store } from '../store.js';
 
 const ragThreshold = ref(0.7);
+
+onMounted(() => {
+  store.loadPrompt('ppt_consultant');
+});
 
 const requestNotification = () => {
   if ('Notification' in window) {
@@ -134,3 +174,19 @@ const requestNotification = () => {
   }
 };
 </script>
+
+<style scoped>
+.custom-scrollbar::-webkit-scrollbar {
+  width: 10px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #1e1e1e;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 5px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+</style>

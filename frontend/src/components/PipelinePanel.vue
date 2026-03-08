@@ -1,5 +1,60 @@
 <template>
   <div class="space-y-6">
+    <!-- DLQ Monitor Card -->
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+      <div class="p-5 border-b flex justify-between items-center">
+        <h3 class="text-sm font-bold text-gray-700 flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full" :class="dlqHealthColor"></span>
+          📬 消息发送队列 (Message Delivery Queue)
+        </h3>
+        <button @click="refreshDLQ"
+          class="text-[10px] font-bold text-gray-500 bg-gray-50 px-2.5 py-1 rounded-lg hover:bg-gray-100 transition-colors">
+          ↻ 刷新
+        </button>
+      </div>
+      <div class="px-5 py-4">
+        <div class="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
+          <!-- Retry Queue -->
+          <div class="bg-blue-50/50 rounded-xl p-4 border border-blue-100/50">
+            <p class="text-[10px] font-bold text-blue-500 uppercase tracking-widest mb-1">重试中 Retrying</p>
+            <p class="text-2xl font-black text-blue-700">{{ store.dlqStatus.retry_queue_size }}</p>
+          </div>
+          <!-- Dead Letter Queue -->
+          <div :class="['rounded-xl p-4 border', store.dlqStatus.dead_letter_queue_size > 0 ? 'bg-red-50/50 border-red-100/50' : 'bg-green-50/50 border-green-100/50']">
+            <p :class="['text-[10px] font-bold uppercase tracking-widest mb-1', store.dlqStatus.dead_letter_queue_size > 0 ? 'text-red-500' : 'text-green-500']">
+              {{ store.dlqStatus.dead_letter_queue_size > 0 ? '⚠ 死信 Dead Letters' : '✓ 死信 Dead Letters' }}
+            </p>
+            <p :class="['text-2xl font-black', store.dlqStatus.dead_letter_queue_size > 0 ? 'text-red-700' : 'text-green-700']">
+              {{ store.dlqStatus.dead_letter_queue_size }}
+            </p>
+          </div>
+          <!-- Retry All Button -->
+          <div v-if="store.dlqStatus.dead_letter_queue_size > 0"
+            class="flex items-center justify-center">
+            <button @click="handleRetryAll"
+              class="bg-orange-500 text-white px-4 py-2.5 rounded-xl text-xs font-black shadow-lg shadow-orange-100 hover:bg-orange-600 transition-all flex items-center gap-1.5">
+              🔄 全部重试补发
+            </button>
+          </div>
+        </div>
+
+        <!-- Dead Letter Details -->
+        <div v-if="store.dlqStatus.dead_letters?.length > 0" class="mt-3 border-t border-gray-100 pt-3">
+          <p class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">未送达消息明细</p>
+          <div class="space-y-2 max-h-32 overflow-y-auto">
+            <div v-for="(dl, idx) in store.dlqStatus.dead_letters" :key="idx"
+              class="flex items-center justify-between bg-red-50/30 border border-red-100/30 rounded-lg px-3 py-2 text-xs">
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="font-mono font-bold text-red-600 shrink-0">{{ dl.buyer_id?.slice(0, 8) }}...</span>
+                <span class="text-gray-600 truncate">{{ dl.content }}</span>
+              </div>
+              <span class="text-[10px] text-gray-400 shrink-0 ml-2">× {{ dl.retry_count }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Header -->
     <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
       <div class="p-6 border-b flex justify-between items-center">
@@ -129,10 +184,28 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { store } from '../store.js';
 
 const showAll = ref(false);
+
+// DLQ 健康色
+const dlqHealthColor = computed(() => {
+  if (store.dlqStatus.dead_letter_queue_size > 0) return 'bg-red-500 animate-pulse';
+  if (store.dlqStatus.retry_queue_size > 0) return 'bg-yellow-500 animate-pulse';
+  return 'bg-green-400';
+});
+
+const refreshDLQ = () => store.fetchDLQ();
+
+const handleRetryAll = async () => {
+  if (!confirm(`确认将 ${store.dlqStatus.dead_letter_queue_size} 条死信消息重新推入重试队列？`)) return;
+  await store.retryAllDLQ();
+};
+
+onMounted(() => {
+  store.fetchDLQ();
+});
 
 // 根据用户名 hash 选择渐变色
 const AVATAR_GRADIENTS = [

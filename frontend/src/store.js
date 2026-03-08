@@ -351,4 +351,66 @@ export const store = reactive({
     // 兼容旧版轮询接口
     startPolling() { this.connect(); },
     stopPolling() { this.disconnect(); },
+
+    // ========== DLQ 监控 ==========
+
+    dlqStatus: { retry_queue_size: 0, dead_letter_queue_size: 0, dead_letters: [] },
+
+    async fetchDLQ() {
+        try {
+            const res = await fetch('/api/dashboard/dlq', { headers: this._headers() });
+            if (res.ok) this.dlqStatus = await res.json();
+        } catch (e) { console.error('fetchDLQ error:', e); }
+    },
+
+    async retryAllDLQ() {
+        try {
+            const res = await fetch('/api/dashboard/dlq/retry-all', {
+                method: 'POST',
+                headers: this._headers(),
+            });
+            const data = await res.json();
+            alert(data.msg || '操作完成');
+            await this.fetchDLQ();
+        } catch (e) { console.error('retryAllDLQ error:', e); }
+    },
+
+    // ========== Prompt 话术管理 ==========
+
+    promptContent: '',
+    promptLoading: false,
+    promptSaving: false,
+
+    async loadPrompt(name = 'ppt_consultant') {
+        this.promptLoading = true;
+        try {
+            const res = await fetch(`/api/dashboard/prompts/${name}`, { headers: this._headers() });
+            if (res.ok) {
+                const data = await res.json();
+                this.promptContent = data.content;
+            }
+        } catch (e) { console.error('loadPrompt error:', e); }
+        finally { this.promptLoading = false; }
+    },
+
+    async savePrompt(name = 'ppt_consultant') {
+        this.promptSaving = true;
+        try {
+            const res = await fetch(`/api/dashboard/prompts/${name}`, {
+                method: 'PUT',
+                headers: this._headers(),
+                body: JSON.stringify({ content: this.promptContent }),
+            });
+            const data = await res.json();
+            if (data.status === 'ok') {
+                alert('✅ ' + data.msg);
+            } else {
+                alert('❌ 保存失败: ' + (data.detail || data.msg || '未知错误'));
+            }
+        } catch (e) {
+            console.error('savePrompt error:', e);
+            alert('❌ 保存失败: ' + e.message);
+        }
+        finally { this.promptSaving = false; }
+    },
 });
