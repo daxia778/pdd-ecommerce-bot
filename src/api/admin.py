@@ -276,12 +276,12 @@ async def toggle_ai_pause(
     """
     if body.paused is None:
         # 自动切换
-        current_state = session_manager.is_ai_paused(user_id, db=db)
+        current_state = await session_manager.is_ai_paused_async_safe(user_id, db=db)
         new_state = not current_state
     else:
         new_state = body.paused
 
-    session_manager.set_ai_paused(user_id, new_state, db=db)
+    await session_manager.set_ai_paused_async_safe(user_id, new_state, db=db)
     action = "paused" if new_state else "resumed"
     logger.info(f"AI 暂停状态已更新 | user_id: {user_id} | 新状态: {action}")
 
@@ -331,15 +331,21 @@ async def send_manual_message(
     except Exception as e:
         logger.warning(f"人工消息 PDD 推送失败（已记录到 DB）| user_id: {user_id} | {e}")
 
-    # 2. 写入 SQLite，标记 platform=manual 区分 AI 自动回复
+    # 2. 写入 SQLite，标记 platform=manual 区分 AI 自动回复 (使用线程池防阻塞)
+    from src.models.database import run_in_db_thread
+
     try:
-        save_message_and_upsert_session(
-            db,
-            user_id=user_id,
-            role="assistant",
-            content=f"[{body.operator_name}] {body.content}",
-            platform="manual",
-        )
+
+        def _save_manual():
+            save_message_and_upsert_session(
+                db,
+                user_id=user_id,
+                role="assistant",
+                content=f"[{body.operator_name}] {body.content}",
+                platform="manual",
+            )
+
+        await run_in_db_thread(_save_manual)
     except Exception as e:
         logger.error(f"人工消息写入 DB 失败 | {e}")
 
@@ -419,7 +425,7 @@ def claim_escalation(
 
 
 @router.post("/api/admin/escalations/{escalation_id}/resolve", summary="完结：标记升级已处理")
-def resolve_escalation(
+async def resolve_escalation(
     escalation_id: int,
     body: ResolveRequest,
     db: Session = Depends(get_db),
@@ -429,12 +435,17 @@ def resolve_escalation(
     可从 pending 或 claimed 状态流转。
     会话状态同步恢复为 active，并自动恢复 AI 自动回复。
     """
-    esc = db_service.resolve_escalation(db, escalation_id=escalation_id, operator_note=body.operator_note)
+    from src.models.database import run_in_db_thread
+
+    def _resolve():
+        return db_service.resolve_escalation(db, escalation_id=escalation_id, operator_note=body.operator_note)
+
+    esc = await run_in_db_thread(_resolve)
     if not esc:
         raise HTTPException(status_code=404, detail="升级记录不存在或已完结")
 
     # 恢复 AI 自动回复
-    session_manager.set_ai_paused(esc.user_id, False, db=db)
+    await session_manager.set_ai_paused_async_safe(esc.user_id, False, db=db)
 
     logger.info(f"升级已处理 | id: {escalation_id} | note: {body.operator_note}")
 

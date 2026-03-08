@@ -51,9 +51,8 @@ async def lifespan(app: FastAPI):
     # 新增表/字段时，使用 `alembic revision --autogenerate -m "描述"` 生成迁移脚本，
     # 应用启动时自动执行 `alembic upgrade head`。
     try:
-        from alembic.config import Config as AlembicConfig
-
         from alembic import command as alembic_command
+        from alembic.config import Config as AlembicConfig
 
         alembic_cfg = AlembicConfig("alembic.ini")
         alembic_command.upgrade(alembic_cfg, "head")
@@ -74,6 +73,11 @@ async def lifespan(app: FastAPI):
         logger.info("✅ LLM 客户端初始化成功")
     except Exception as e:
         logger.error(f"❌ LLM 客户端初始化失败: {e}")
+
+    # ===== P0-1 修复: 初始化统一的 Redis 客户端 =====
+    from src.services.redis_client import redis_client
+
+    await redis_client.initialize()
 
     # P2-Root-Cause-Sweep: 综合安全门禁 — 检查所有敏感凭证
     _app_env = os.getenv("APP_ENV", "development").lower()
@@ -163,6 +167,12 @@ async def lifespan(app: FastAPI):
         await wecom_client.close()
         logger.info("✅ 企业微信客户端连接池已关闭")
 
+    # ===== P0-1 修复: 关闭 Redis 连接池 =====
+    from src.services.redis_client import redis_client
+
+    with contextlib.suppress(Exception):
+        await redis_client.close()
+
 
 # 创建 FastAPI 应用
 app = FastAPI(
@@ -193,7 +203,7 @@ app.mount("/files", StaticFiles(directory="data/output"), name="generated_files"
 # ===== Prometheus 监控埋点 =====
 Instrumentator().instrument(app).expose(app)
 
-# ===== P0-Fix-3: 基于 TTLCache 的内存限流器 =====
+# ===== P0-Fix-3: 内存限流器兜底 (无 Redis 时使用) =====
 # 每个 IP 的访问计数在 60s 后自动淘汰，无需手动清理
 _rate_limit_store: TTLCache = TTLCache(maxsize=10000, ttl=60)
 
@@ -219,14 +229,28 @@ async def rate_limit_middleware(request: Request, call_next):
     if request.url.path.startswith("/api/v1/chat"):
         client_ip = request.client.host if request.client else "unknown"
 
-        # P0-Fix-3: 基于 TTLCache 的滑动窗口限流，每分钟 60 次
-        current_count = _rate_limit_store.get(client_ip, 0)
-        if current_count >= 60:
+        # P0-Fix-3: 优先使用 Redis 限流，支持多进程状态一致
+        from src.services.redis_client import redis_client
+
+        if redis_client.is_available:
+            redis_key = f"rate_limit:ip:{client_ip}"
+            try:
+                current_count = await redis_client.client.incr(redis_key)
+                if current_count == 1:
+                    await redis_client.client.expire(redis_key, 60)
+            except Exception as e:
+                logger.warning(f"Redis 限流器异常，降级到内存模式: {e}")
+                current_count = _rate_limit_store.get(client_ip, 0) + 1
+                _rate_limit_store[client_ip] = current_count
+        else:
+            current_count = _rate_limit_store.get(client_ip, 0) + 1
+            _rate_limit_store[client_ip] = current_count
+
+        if current_count > 60:
             logger.warning(f"触发限流 | IP: {client_ip} | 请求已被拦截")
             return JSONResponse(
                 status_code=429, content={"status": "error", "message": "请求过于频繁，请稍后再试 (Too Many Requests)"}
             )
-        _rate_limit_store[client_ip] = current_count + 1
 
     response = await call_next(request)
     return response

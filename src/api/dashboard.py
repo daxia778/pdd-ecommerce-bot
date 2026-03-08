@@ -569,7 +569,7 @@ async def get_system_health(db: DBSession = Depends(get_db)):
     )
 
     # 5. 企业微信
-    wecom_ok = wecom_client.is_configured()
+    wecom_ok = wecom_client.is_configured
     components.append(
         {
             "name": "企业微信",
@@ -605,8 +605,10 @@ async def get_system_health(db: DBSession = Depends(get_db)):
 
     # 7. 数据库
     def _check_db(db_session: DBSession):
+        from sqlalchemy import text
+
         try:
-            db_session.execute("SELECT 1")
+            db_session.execute(text("SELECT 1"))
             return True
         except Exception:
             return False

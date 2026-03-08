@@ -31,16 +31,18 @@ from src.core.session_manager import session_manager
 from src.models.database import get_db, run_in_db_thread
 from src.services import db_service
 from src.services.pdd_api_client import pdd_api_client
+from src.services.redis_client import redis_client
 from src.services.task_coordinator import task_coordinator
+from src.utils.background_task_wrapper import catch_background_exceptions
 from src.utils.logger import logger
 from src.utils.prompt_loader import prompt_loader
 
 router = APIRouter()
 
-# P1-2 (P0-3 修复): 语义防抖缓存，使用 TTLCache 避免内存泄漏，最大 1000 条，生命周期 1 小时
+# P1-2 (P0-3 修复): 语义防抖缓存，当无 Redis 时退化为 TTLCache 避免内存泄漏
 _debounce_cache = TTLCache(maxsize=1000, ttl=3600)
 
-# P1-Fix-3: Webhook 防重放攻击缓存 — 记录已处理的签名，5 分钟内相同签名拒绝重放
+# P1-Fix-3: Webhook 防重放攻击缓存 (内存兜底)
 _webhook_nonce_cache = TTLCache(maxsize=5000, ttl=300)
 WEBHOOK_TIMESTAMP_TOLERANCE = 300  # 签名时间戳容差: 5分钟
 
@@ -126,9 +128,14 @@ async def _process_chat(
     hash_obj = hashlib.md5(message.encode("utf-8")).hexdigest()
     cache_key = f"qa_cache:{hash_obj}"
     try:
-        if cache_key in _debounce_cache:
-            cached_reply = _debounce_cache[cache_key]
-            logger.info("🎯 Memory 全局精确匹配缓存命中，跳过 LLM 调用。")
+        cached_reply = None
+        if redis_client.is_available:
+            cached_reply = await redis_client.get(cache_key)
+        else:
+            cached_reply = _debounce_cache.get(cache_key)
+
+        if cached_reply:
+            logger.info("🎯 Redis/Memory 全局精确匹配缓存命中，跳过 LLM 调用。")
             # P0-Root-Cause-Sweep: 使用异步安全方法，避免同步 DB I/O 阻塞事件循环
             await session_manager.add_message_async_safe(user_id, "user", message, db=db, platform=platform)
             await session_manager.add_message_async_safe(user_id, "assistant", cached_reply, db=db, platform=platform)
@@ -180,7 +187,10 @@ async def _process_chat(
         reply = await llm.chat(messages=history, system_prompt=system_prompt)
         response_time_ms = int((time.monotonic() - _llm_start) * 1000)
         with contextlib.suppress(Exception):
-            _debounce_cache[cache_key] = reply
+            if redis_client.is_available:
+                await redis_client.set(cache_key, reply, ex=3600)
+            else:
+                _debounce_cache[cache_key] = reply
     except Exception as e:
         logger.error(f"LLM 调用异常: {e}")
         raise HTTPException(status_code=503, detail=f"AI 服务暂时不可用: {str(e)}") from e
@@ -336,10 +346,22 @@ async def pdd_webhook(
                 raise HTTPException(status_code=401, detail="签名已过期")
 
         # Nonce 去重：同一个签名 5 分钟内不允许重复提交
-        if x_pdd_sign in _webhook_nonce_cache:
+        is_replayed = False
+        if redis_client.is_available:
+            nonce_key = f"webhook_nonce:{x_pdd_sign}"
+            # nx=True 保证原子性
+            acquired = await redis_client.client.set(nonce_key, "1", ex=300, nx=True)
+            if not acquired:
+                is_replayed = True
+        else:
+            if x_pdd_sign in _webhook_nonce_cache:
+                is_replayed = True
+            else:
+                _webhook_nonce_cache[x_pdd_sign] = True
+
+        if is_replayed:
             logger.warning(f"Webhook 拒绝: 重放攻击检测 | sign={x_pdd_sign[:16]}...")
             raise HTTPException(status_code=409, detail="重复请求")
-        _webhook_nonce_cache[x_pdd_sign] = True
     else:
         logger.debug("未配置 pdd_webhook_secret，跳过 Webhook 签名校验")
 
@@ -379,6 +401,7 @@ async def pdd_webhook(
     }
 
 
+@catch_background_exceptions
 async def _process_pdd_webhook_background(req: PddWebhookRequest):
     """P0-2: 背景处理 PDD Webhook 请求大模型，独立提供数据库 session 防止关闭报错"""
     from src.models.database import SessionLocal
@@ -458,7 +481,7 @@ async def health(db: DBSession = Depends(get_db)):
         "status": "ok",
         "database": db_status,
         "llm_status": llm_status,
-        "active_sessions_memory": session_manager.get_user_count(),
+        "active_sessions_memory": "redis_backed",
         "knowledge_docs": rag.get_doc_count(),
         "db_stats": stats,
     }
