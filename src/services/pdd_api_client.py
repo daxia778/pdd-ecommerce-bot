@@ -58,7 +58,7 @@ class PddApiClient:
 
         for k in sorted_keys:
             v = params[k]
-            if isinstance(v, dict | list):
+            if isinstance(v, (dict, list)):  # noqa: UP038  # Python 3.9 compat
                 sign_str += f"{k}{json.dumps(v, separators=(',', ':'))}"
             else:
                 sign_str += f"{k}{v}"
