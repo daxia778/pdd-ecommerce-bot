@@ -188,11 +188,13 @@ async def _process_chat(
         if cache_key in _debounce_cache:
             cached_reply = _debounce_cache[cache_key]
             logger.info("🎯 Memory 全局精确匹配缓存命中，跳过 LLM 调用。")
-            session_manager.add_message_sync(user_id, "user", message, db=db, platform=platform)
-            session_manager.add_message_sync(user_id, "assistant", cached_reply, db=db, platform=platform)
+            # P0-Root-Cause-Sweep: 使用异步安全方法，避免同步 DB I/O 阻塞事件循环
+            await session_manager.add_message_async_safe(user_id, "user", message, db=db, platform=platform)
+            await session_manager.add_message_async_safe(user_id, "assistant", cached_reply, db=db, platform=platform)
+            history = await session_manager.get_history_async_safe(user_id, db=db)
             return {
                 "reply": cached_reply,
-                "history_length": len(session_manager.get_history(user_id, db=db)),
+                "history_length": len(history),
                 "escalated": False,
                 "escalation_reason": "",
             }
@@ -545,18 +547,24 @@ async def upload_wechat_qr(
     - 保存二维码图片路径
     - 状态流转: wechat_pending -> req_fixed
     - 通知后台工作人员
+
+    P0-Root-Cause-Sweep: 所有 DB 操作通过 run_in_db_thread 卸载，
+    HTTP 下载使用 pdd_api_client 的共享连接池。
     """
     import os
 
     from src.models.database import Order
 
-    # 查找最近的待处理订单
-    order = (
-        db.query(Order)
-        .filter(Order.user_id == user_id, Order.status == "wechat_pending")
-        .order_by(Order.created_at.desc())
-        .first()
-    )
+    # P0-Root-Cause-Sweep: 将同步 DB 查询卸载到线程池
+    def _find_pending_order(db_session: DBSession):
+        return (
+            db_session.query(Order)
+            .filter(Order.user_id == user_id, Order.status == "wechat_pending")
+            .order_by(Order.created_at.desc())
+            .first()
+        )
+
+    order = await run_in_db_thread(_find_pending_order, db)
 
     if not order:
         raise HTTPException(
@@ -571,26 +579,26 @@ async def upload_wechat_qr(
     qr_path = os.path.join(qr_dir, qr_filename)
 
     try:
-        import httpx as httpx_client
-
-        async with httpx_client.AsyncClient() as client:
-            resp = await client.get(image_url)
-            if resp.status_code == 200:
-                with open(qr_path, "wb") as f:
-                    f.write(resp.content)
-                logger.info(f"微信二维码已保存 | user: {user_id} | path: {qr_path}")
-            else:
-                # 如果下载失败，直接保存 URL
-                qr_path = image_url
-                logger.warning(f"二维码下载失败，保存URL | user: {user_id}")
+        # P0-Root-Cause-Sweep: 使用共享连接池下载，不再每次新建 httpx client
+        resp = await pdd_api_client._client.get(image_url)
+        if resp.status_code == 200:
+            with open(qr_path, "wb") as f:
+                f.write(resp.content)
+            logger.info(f"微信二维码已保存 | user: {user_id} | path: {qr_path}")
+        else:
+            qr_path = image_url
+            logger.warning(f"二维码下载失败，保存URL | user: {user_id}")
     except Exception as e:
         qr_path = image_url
         logger.warning(f"二维码下载异常: {e}，保存URL")
 
-    # 更新订单
-    order.wechat_qr_image_path = qr_path
-    order.status = "req_fixed"
-    db.commit()
+    # P0-Root-Cause-Sweep: 将同步 DB 写操作卸载到线程池
+    def _update_order(db_session: DBSession):
+        order.wechat_qr_image_path = qr_path
+        order.status = "req_fixed"
+        db_session.commit()
+
+    await run_in_db_thread(_update_order, db)
 
     logger.info(f"微信二维码已关联订单 | order: {order.order_sn} | user: {user_id} | 状态: wechat_pending -> req_fixed")
 
