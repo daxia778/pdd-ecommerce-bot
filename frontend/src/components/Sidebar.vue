@@ -2,7 +2,7 @@
   <aside
     :class="[
       'h-screen flex flex-col shrink-0 z-50 bg-white border-r border-gray-100 relative transition-all duration-300 ease-in-out',
-      collapsed ? 'w-[68px]' : 'w-72'
+      collapsed ? 'w-[88px]' : 'w-72'
     ]"
     style="box-shadow: 1px 0 20px rgba(0,0,0,0.03)"
   >
@@ -13,8 +13,8 @@
       style="background-image: url('data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'60\' height=\'60\' viewBox=\'0 0 60 60\'%3E%3Cpath d=\'M30 15c-8.284 0-15 6.716-15 15s6.716 15 15 15 15-6.716 15-15-6.716-15-15-15zm0 2c7.18 0 13 5.82 13 13s-5.82 13-13 13-13-5.82-13-13 5.82-13 13-13z\' fill=\'%23E02E24\' fill-opacity=\'0.02\'/%3E%3Ctext x=\'30\' y=\'34\' font-family=\'Arial\' font-weight=\'900\' font-size=\'12\' fill=\'%23E02E24\' fill-opacity=\'0.03\' text-anchor=\'middle\'%3E多%3C/text%3E%3C/svg%3E'); background-repeat: repeat;">
     </div>
 
-    <!-- Logo区域 -->
-    <div :class="['flex items-center z-10 relative transition-all duration-300', collapsed ? 'p-4 justify-center gap-0' : 'p-8 gap-3']">
+    <!-- Logo区域 (Center axis at 44px. pl-6=24px; w-10=40px, half=20px; 24+20=44px) -->
+    <div :class="['flex items-center z-10 relative transition-all duration-300 px-6 py-8 gap-3']">
       <div class="w-10 h-10 bg-gradient-to-br from-[#FF574D] to-[#E02E24] rounded-xl flex items-center justify-center shadow-lg border border-white/20 shrink-0">
         <span class="text-white text-xl font-black drop-shadow-sm">多</span>
       </div>
@@ -27,11 +27,14 @@
       </div>
     </div>
 
-    <!-- System Live 指示器 -->
-    <div :class="['flex items-center bg-emerald-50 rounded-full w-fit mb-4 transition-all duration-300 z-10', collapsed ? 'px-2 py-1 mx-auto gap-0' : 'px-3 py-1 mx-6 gap-1.5']">
+    <!-- System Live (Center axis at 44px. ml-6=24px; pl-[17px]=17px; w-1.5=6px, half=3px; 24+17+3=44px) -->
+    <div
+      class="flex items-center bg-emerald-50 rounded-full mb-4 transition-all duration-300 z-10 relative ml-6 px-[17px] py-1"
+      :class="collapsed ? 'w-fit gap-0' : 'w-fit gap-1.5'"
+    >
       <div class="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shrink-0"></div>
       <span
-        class="text-[10px] font-bold text-emerald-700 uppercase tracking-tighter whitespace-nowrap transition-all duration-300 overflow-hidden display-block"
+        class="text-[10px] font-bold text-emerald-700 uppercase tracking-tighter whitespace-nowrap transition-all duration-300 overflow-hidden block"
         :class="collapsed ? 'w-0 opacity-0' : 'w-[68px] opacity-100'"
       >System Live</span>
     </div>
@@ -48,10 +51,8 @@
         :key="item.id"
         @click="store.activePanel = item.id"
         :class="[
-          'relative group flex items-center transition-all cursor-pointer border',
-          collapsed
-            ? 'mx-2 my-1.5 px-0 py-3 rounded-xl justify-center gap-0'
-            : 'mx-4 my-1 px-4 py-3 rounded-2xl gap-3',
+          'relative group flex items-center transition-all cursor-pointer border mx-4 my-1 py-3 rounded-2xl',
+          collapsed ? 'px-[18px] gap-0' : 'px-[18px] gap-3',
           store.activePanel === item.id
             ? 'bg-red-50 text-red-600 border-red-100'
             : 'text-gray-500 border-transparent hover:bg-red-50 hover:text-red-600'
@@ -82,13 +83,13 @@
       <div class="h-px bg-gradient-to-r from-transparent via-gray-200 to-transparent transition-all duration-300" :class="collapsed ? 'my-4 mx-3' : 'my-4 mx-6'"></div>
     </nav>
 
-    <!-- 折叠切换按钮 -->
-    <div class="z-10 px-2 mb-2">
+    <!-- 折叠切换按钮 (Center at 44px. px-4=16px; btn px-[20px]=20px; icon w-4=16px, half=8; 16+20+8=44) -->
+    <div class="z-10 px-4 mb-2">
       <button
         @click="toggleCollapse"
         :class="[
-          'w-full flex items-center py-2 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-all cursor-pointer',
-          collapsed ? 'justify-center px-0 gap-0' : 'px-4 gap-2'
+          'w-full flex items-center py-2 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-all cursor-pointer px-[20px]',
+          collapsed ? 'gap-0' : 'gap-3'
         ]"
         :title="collapsed ? '展开侧边栏' : '收起侧边栏'"
       >
@@ -102,11 +103,11 @@
       </button>
     </div>
 
-    <!-- 用户信息 -->
-    <div class="z-10 transition-all duration-300" :class="collapsed ? 'px-2 pb-4' : 'px-6 pb-6'">
+    <!-- 用户信息 (Center at 44px. mx-4=16px; p-2=8px; w-10=40px, half=20px; 16+8+20=44px) -->
+    <div class="z-10 pb-6 mx-4">
       <div :class="[
-        'bg-gray-50 rounded-2xl border border-gray-100 flex items-center cursor-pointer hover:bg-white hover:shadow-lg hover:border-red-500 transition-all',
-        collapsed ? 'p-2 justify-center gap-0' : 'p-4 gap-3'
+        'bg-gray-50 rounded-2xl border border-gray-100 flex items-center cursor-pointer hover:bg-white hover:shadow-lg hover:border-red-500 transition-all p-2',
+        collapsed ? 'gap-0' : 'gap-3'
       ]">
         <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-[#FF574D] to-[#E02E24] text-white font-black flex items-center justify-center shadow-md shadow-red-100 shrink-0">A</div>
         <div
