@@ -59,8 +59,7 @@ class MessageRetryQueue:
         msg = RetryMessage(mall_id=mall_id, buyer_id=buyer_id, content=content)
         self._retry_queue.append(msg)
         logger.warning(
-            f"📬 消息重试队列 | 入队 | buyer: {buyer_id} | "
-            f"队列长度: {len(self._retry_queue)} | 内容: {content[:50]}..."
+            f"📬 消息重试队列 | 入队 | buyer: {buyer_id} | 队列长度: {len(self._retry_queue)} | 内容: {content[:50]}..."
         )
 
     async def start_retry_worker(self):
@@ -99,9 +98,7 @@ class MessageRetryQueue:
                 )
 
                 if send_ok:
-                    logger.info(
-                        f"📬 消息重试队列 | ✅ 重试成功 | buyer: {msg.buyer_id} | " f"第 {msg.retry_count} 次尝试"
-                    )
+                    logger.info(f"📬 消息重试队列 | ✅ 重试成功 | buyer: {msg.buyer_id} | 第 {msg.retry_count} 次尝试")
                 else:
                     raise RuntimeError("PDD API 返回失败")
 
