@@ -7,7 +7,7 @@
           <span v-if="required" class="text-red-500 mr-1">*</span>
           {{ label }}
           <!-- AI Confidence Level Badge -->
-          <span v-if="confidence && !isEdited" class="ml-2 px-1.5 py-[1px] rounded font-bold text-[8px]" :class="confidence >= 90 ? 'bg-green-100 text-green-600' : 'bg-amber-100 text-amber-600'">
+          <span v-if="confidence && confidence > 0 && !isEdited && currentValue && currentValue !== '-'" class="ml-2 px-1.5 py-[1px] rounded font-bold text-[8px]" :class="confidence >= 90 ? 'bg-green-100 text-green-600' : 'bg-amber-100 text-amber-600'">
             AI置信度: {{ confidence }}%
           </span>
           <!-- Edited Badge -->

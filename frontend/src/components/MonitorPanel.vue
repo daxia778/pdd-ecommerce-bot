@@ -256,8 +256,16 @@
             <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
             结构化需求采集
           </h2>
-          <span class="text-[9px] bg-purple-100 text-purple-600 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
-            AI 实时抽取
+          <span
+            @click="simulateExtracting"
+            :class="[
+              'text-[9px] px-2 py-1 rounded-full font-bold uppercase tracking-wider cursor-pointer transition-all',
+              isExtracting
+                ? 'bg-purple-200 text-purple-700 animate-pulse'
+                : 'bg-purple-100 text-purple-600 hover:bg-purple-200 hover:shadow-sm'
+            ]"
+          >
+            {{ isExtracting ? 'AI 提取中...' : '重新 AI 提取' }}
           </span>
         </div>
         <div class="flex-1 overflow-y-auto p-4 space-y-4">
@@ -379,7 +387,7 @@
                  <p class="font-bold text-gray-700 mb-2">需求尚不明确</p>
                  <p class="text-[11px] text-gray-400 mb-6 leading-relaxed">AI 正在与买家沟通中<br/>待买家提供"主题、页数"等核心要素后将自动提纯</p>
                  <button @click="simulateExtracting" class="bg-gray-50 text-purple-600 border border-purple-200 px-4 py-2 rounded-xl text-xs font-bold hover:bg-purple-50 transition-colors inline-block mx-auto">
-                    (演示) 强制 AI 提纯
+                    🔄 AI 重新提取需求
                  </button>
              </div>
 
@@ -557,12 +565,13 @@ const localReqData = reactive({
   topic: '', pages: '', style: '', deadline: '', budget: '', audience: '', outline: '', assets: ''
 });
 
-// Mock AI Confidences (different fields have different confidence levels to show visual differences)
+// Dynamic per-field confidence from backend
+const fieldConfidence = reactive({
+  topic: 0, pages: 0, style: 0, deadline: 0, budget: 0, audience: 0, outline: 0, assets: 0
+});
+
 const getConfidence = (key) => {
-  const confMap = {
-    topic: 95, pages: 98, style: 85, deadline: 92, budget: 75, audience: 88, outline: 65, assets: 90
-  };
-  return confMap[key] || 80;
+  return fieldConfidence[key] || 0;
 };
 
 const isExtracting = ref(false);
@@ -579,6 +588,8 @@ watch(() => store.selectedUser, async (newVal) => {
     Object.keys(localReqData).forEach(k => {
       localReqData[k] = data[k] || '-';
     });
+    // Demo data uses fixed confidence
+    Object.keys(fieldConfidence).forEach(k => fieldConfidence[k] = data[k] && data[k] !== '-' ? 95 : 0);
   } else if (newVal) {
     // Real user: try extracting from backend
     Object.keys(localReqData).forEach(k => localReqData[k] = '');
@@ -622,6 +633,15 @@ async function triggerExtraction(userId) {
             Object.keys(localReqData).forEach(k => {
                 if (data[k]) localReqData[k] = data[k];
             });
+            // Update per-field confidence from backend
+            if (data.confidence) {
+                Object.keys(fieldConfidence).forEach(k => {
+                    fieldConfidence[k] = data.confidence[k] || 0;
+                });
+            }
+        } else {
+            // No data found — clear confidence
+            Object.keys(fieldConfidence).forEach(k => fieldConfidence[k] = 0);
         }
     } catch (e) {
         console.error('Extraction failed:', e);
