@@ -66,9 +66,9 @@
               class="absolute top-2 right-2 text-[9px] font-bold uppercase bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full ring-1 ring-purple-200"
             >演示数据</span>
 
-            <div class="flex justify-between items-start mb-1.5">
-              <span class="font-bold text-gray-700 truncate w-2/3 text-sm">{{ formatUserId(session.user_id) }}</span>
-              <span class="text-[9px] uppercase font-bold text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">{{ session.platform }}</span>
+            <div class="flex items-start mb-1.5">
+              <span class="font-bold text-gray-700 truncate flex-1 text-sm mr-2">{{ formatUserId(session.user_id) }}</span>
+              <span v-if="session.platform" class="text-[9px] uppercase font-bold text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded shrink-0">{{ session.platform }}</span>
             </div>
             <div class="flex justify-between items-center text-[11px] text-gray-500 font-medium">
               <span class="flex items-center">

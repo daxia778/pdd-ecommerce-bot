@@ -1,5 +1,5 @@
 <template>
-  <header class="h-16 border-b border-gray-200/80 bg-white/80 backdrop-blur-md flex items-center justify-between px-6 lg:px-8 shrink-0 w-full">
+  <header class="h-16 border-b border-gray-200/80 bg-white/80 backdrop-blur-md flex items-center justify-between px-6 lg:px-8 shrink-0 w-full relative z-40">
       <!-- 左侧：面包屑导航 -->
       <div class="flex items-center gap-2">
           <button
