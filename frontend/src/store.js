@@ -413,4 +413,43 @@ export const store = reactive({
         }
         finally { this.promptSaving = false; }
     },
+
+    // ========== 系统健康度 ==========
+
+    systemHealth: { overall: 'healthy', components: [] },
+    healthLoading: false,
+
+    async fetchSystemHealth() {
+        this.healthLoading = true;
+        try {
+            const res = await fetch('/api/dashboard/system-health', { headers: this._headers() });
+            if (res.ok) this.systemHealth = await res.json();
+        } catch (e) { console.error('fetchSystemHealth error:', e); }
+        finally { this.healthLoading = false; }
+    },
+
+    // ========== 知识库批量导入 ==========
+
+    async importKnowledgeFile(file) {
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+            const res = await fetch('/api/admin/knowledge/import', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${this.token}` },
+                body: formData,
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                alert(`✅ ${data.msg}`);
+                await this.loadKnowledge();
+            } else {
+                alert('❌ 导入失败: ' + (data.detail || data.msg || '未知错误'));
+            }
+            return data;
+        } catch (e) {
+            console.error('importKnowledge error:', e);
+            alert('❌ 导入失败: ' + e.message);
+        }
+    },
 });

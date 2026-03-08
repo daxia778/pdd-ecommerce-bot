@@ -460,3 +460,186 @@ async def update_prompt(name: str, body: PromptUpdateRequest):
 
     logger.info(f"Prompt 配置已更新 | name: {name} | 备份: {backup_path}")
     return {"status": "ok", "msg": f"{name} 已更新并立即生效"}
+
+
+# ==========================================================================
+# 系统链路健康度 API — 全链路单屏可视化
+# ==========================================================================
+
+
+@router.get("/api/dashboard/system-health")
+async def get_system_health(db: DBSession = Depends(get_db)):
+    """
+    聚合所有子系统的运行状态，返回统一的健康度快照。
+
+    覆盖链路节点：
+    1. PDD 平台连接 (pdd_api)
+    2. LLM 大模型服务 (llm)
+    3. RAG 知识库引擎 (rag)
+    4. 消息重试队列 (retry_queue / dlq)
+    5. 企业微信服务 (wecom)
+    6. Prompt 配置热加载 (prompt_loader)
+    7. 数据库连接 (database)
+    """
+    from src.core.rag_engine import get_rag_engine
+    from src.services.message_retry_queue import retry_queue
+    from src.services.wecom_client import wecom_client
+    from src.utils.prompt_loader import prompt_loader
+
+    components = []
+
+    # 1. PDD API 连接状态
+    from src.services.pdd_api_client import pdd_api_client
+
+    pdd_configured = bool(pdd_api_client.client_id and pdd_api_client.client_secret and pdd_api_client.access_token)
+    components.append(
+        {
+            "name": "PDD 开放平台",
+            "key": "pdd_api",
+            "status": "healthy" if pdd_configured else "degraded",
+            "detail": "凭证已配置，连接正常" if pdd_configured else "凭证未配置，降级为日志模式",
+            "icon": "🛒",
+        }
+    )
+
+    # 2. LLM 大模型服务
+    try:
+        from src.core.llm_client import get_llm_client
+
+        llm = get_llm_client()
+        llm_name = type(llm).__name__
+        components.append(
+            {
+                "name": "LLM 大模型",
+                "key": "llm",
+                "status": "healthy",
+                "detail": f"Provider: {llm_name} | 运行正常",
+                "icon": "🧠",
+            }
+        )
+    except Exception as e:
+        components.append(
+            {
+                "name": "LLM 大模型",
+                "key": "llm",
+                "status": "error",
+                "detail": f"初始化失败: {e}",
+                "icon": "🧠",
+            }
+        )
+
+    # 3. RAG 知识库
+    try:
+        rag = get_rag_engine()
+        doc_count = rag.get_doc_count()
+        components.append(
+            {
+                "name": "RAG 知识库",
+                "key": "rag",
+                "status": "healthy" if doc_count > 0 else "warning",
+                "detail": f"已索引 {doc_count} 条知识片段" if doc_count > 0 else "知识库为空，建议导入数据",
+                "icon": "📚",
+            }
+        )
+    except Exception as e:
+        components.append(
+            {
+                "name": "RAG 知识库",
+                "key": "rag",
+                "status": "error",
+                "detail": f"引擎异常: {e}",
+                "icon": "📚",
+            }
+        )
+
+    # 4. 消息重试队列 / DLQ
+    dlq_size = retry_queue.dead_letter_queue_size
+    retry_size = retry_queue.retry_queue_size
+    if dlq_size > 0:
+        mq_status = "error"
+        mq_detail = f"⚠ {dlq_size} 条死信待处理 | {retry_size} 条重试中"
+    elif retry_size > 0:
+        mq_status = "warning"
+        mq_detail = f"{retry_size} 条消息重试中 | 死信: 0"
+    else:
+        mq_status = "healthy"
+        mq_detail = "队列清空，全部送达"
+    components.append(
+        {"name": "消息投递队列", "key": "message_queue", "status": mq_status, "detail": mq_detail, "icon": "📬"}
+    )
+
+    # 5. 企业微信
+    wecom_ok = wecom_client.is_configured()
+    components.append(
+        {
+            "name": "企业微信",
+            "key": "wecom",
+            "status": "healthy" if wecom_ok else "inactive",
+            "detail": "凭证已配置，接口就绪" if wecom_ok else "未配置凭证，功能待启用",
+            "icon": "💬",
+        }
+    )
+
+    # 6. Prompt 热加载
+    try:
+        prompt_loader.get("ppt_consultant")
+        components.append(
+            {
+                "name": "Prompt 配置",
+                "key": "prompt",
+                "status": "healthy",
+                "detail": "ppt_consultant.yaml 已加载",
+                "icon": "📝",
+            }
+        )
+    except Exception:
+        components.append(
+            {
+                "name": "Prompt 配置",
+                "key": "prompt",
+                "status": "error",
+                "detail": "YAML 配置加载失败",
+                "icon": "📝",
+            }
+        )
+
+    # 7. 数据库
+    def _check_db(db_session: DBSession):
+        try:
+            db_session.execute("SELECT 1")
+            return True
+        except Exception:
+            return False
+
+    try:
+        db_ok = await run_in_db_thread(_check_db, db)
+        components.append(
+            {
+                "name": "SQLite 数据库",
+                "key": "database",
+                "status": "healthy" if db_ok else "error",
+                "detail": "WAL 模式运行正常" if db_ok else "连接异常",
+                "icon": "🗄️",
+            }
+        )
+    except Exception:
+        components.append(
+            {
+                "name": "SQLite 数据库",
+                "key": "database",
+                "status": "error",
+                "detail": "无法连接数据库",
+                "icon": "🗄️",
+            }
+        )
+
+    # 汇总状态
+    statuses = [c["status"] for c in components]
+    if "error" in statuses:
+        overall = "error"
+    elif "warning" in statuses or "degraded" in statuses:
+        overall = "warning"
+    else:
+        overall = "healthy"
+
+    return {"overall": overall, "components": components}

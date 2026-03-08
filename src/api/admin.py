@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -124,6 +124,109 @@ async def delete_knowledge(doc_id: str):
         return {"status": "success"}
     else:
         raise HTTPException(status_code=500, detail="删除知识失败,可能ID不存在")
+
+
+@router.post("/api/admin/knowledge/import", summary="批量导入知识 (CSV/TXT)")
+async def import_knowledge(file: UploadFile = File(...)):
+    """
+    批量导入知识库数据，支持两种格式：
+
+    **CSV 格式**（推荐）：
+    - 自动检测 question/answer 或 q/a 列名
+    - 每行生成一条 QA 对写入 RAG 知识库
+
+    **TXT 格式**：
+    - 以空行分割段落，每个非空段落作为一条知识片段
+    - 如果没有空行分隔，则逐行导入（跳过空行）
+
+    安全限制：
+    - 单次最大 5MB
+    - 最多 500 条
+    """
+    # 文件大小限制 5MB
+    MAX_SIZE = 5 * 1024 * 1024
+    content_bytes = await file.read()
+    if len(content_bytes) > MAX_SIZE:
+        raise HTTPException(status_code=413, detail="文件过大，单次限制 5MB")
+
+    filename = (file.filename or "unknown").lower()
+    content_text = content_bytes.decode("utf-8-sig")  # 兼容 BOM
+
+    rag_engine = get_rag_engine()
+    imported = 0
+    errors = []
+    MAX_ITEMS = 500
+
+    if filename.endswith(".csv"):
+        import csv
+        import io
+
+        reader = csv.DictReader(io.StringIO(content_text))
+        fieldnames = [f.lower().strip() for f in (reader.fieldnames or [])]
+
+        # 自动检测列名
+        q_col = next((f for f in fieldnames if f in ("question", "q", "问题")), None)
+        a_col = next((f for f in fieldnames if f in ("answer", "a", "答案", "回答")), None)
+        content_col = next((f for f in fieldnames if f in ("content", "内容", "知识")), None)
+
+        for i, row in enumerate(reader):
+            if imported >= MAX_ITEMS:
+                errors.append(f"已达上限 {MAX_ITEMS} 条，后续行被忽略")
+                break
+            try:
+                # 将 row 的 key 统一为小写
+                row_lower = {k.lower().strip(): v for k, v in row.items()}
+
+                if q_col and a_col:
+                    q = row_lower.get(q_col, "").strip()
+                    a = row_lower.get(a_col, "").strip()
+                    if q and a:
+                        doc_content = f"问：{q}\n答：{a}"
+                        rag_engine.add_document(content=doc_content, metadata={"source": "csv_import"})
+                        imported += 1
+                elif content_col:
+                    c = row_lower.get(content_col, "").strip()
+                    if c:
+                        rag_engine.add_document(content=c, metadata={"source": "csv_import"})
+                        imported += 1
+                else:
+                    # 尝试拼接所有非空值
+                    values = [v.strip() for v in row.values() if v and v.strip()]
+                    if values:
+                        rag_engine.add_document(content=" | ".join(values), metadata={"source": "csv_import"})
+                        imported += 1
+            except Exception as e:
+                errors.append(f"行 {i + 2}: {e}")
+
+    elif filename.endswith(".txt"):
+        # 段落分割：用连续空行分段
+        paragraphs = content_text.split("\n\n")
+        if len(paragraphs) <= 1:
+            # 没有空行分隔，逐行导入
+            paragraphs = content_text.split("\n")
+
+        for i, para in enumerate(paragraphs):
+            if imported >= MAX_ITEMS:
+                errors.append(f"已达上限 {MAX_ITEMS} 条，后续段落被忽略")
+                break
+            text = para.strip()
+            if not text or len(text) < 5:  # 过短的行跳过
+                continue
+            try:
+                rag_engine.add_document(content=text, metadata={"source": "txt_import"})
+                imported += 1
+            except Exception as e:
+                errors.append(f"段落 {i + 1}: {e}")
+    else:
+        raise HTTPException(status_code=422, detail="不支持的文件格式，仅支持 .csv 和 .txt")
+
+    logger.info(f"知识库批量导入完成 | 文件: {file.filename} | 导入: {imported} 条 | 错误: {len(errors)} 条")
+    return {
+        "status": "success",
+        "imported": imported,
+        "errors": errors[:10],  # 最多返回10条错误信息
+        "msg": f"成功导入 {imported} 条知识" + (f"，{len(errors)} 条失败" if errors else ""),
+    }
 
 
 # ===== 统计接口 =====

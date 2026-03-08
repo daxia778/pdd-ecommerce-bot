@@ -8,8 +8,52 @@
                   </svg>
                   智小设 AI 专属知识库管理
               </h2>
-              <button @click="showAddKnowledge = true"
-                  class="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-blue-200 hover:bg-blue-700 transition-all">+ 新增标准规则</button>
+              <div class="flex items-center gap-2">
+                  <button @click="showImport = !showImport"
+                      class="bg-green-600 text-white px-4 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-green-200 hover:bg-green-700 transition-all flex items-center gap-1.5">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                      批量导入
+                  </button>
+                  <button @click="showAddKnowledge = true"
+                      class="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-blue-200 hover:bg-blue-700 transition-all">+ 新增标准规则</button>
+              </div>
+          </div>
+
+          <!-- 批量导入面板 -->
+          <div v-if="showImport" class="p-6 bg-green-50 border-b">
+            <h3 class="font-bold text-green-800 mb-3 flex items-center gap-2">📦 批量导入知识 (CSV / TXT)</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <!-- 拖拽上传区 -->
+              <div
+                @dragover.prevent="dragOver = true"
+                @dragleave="dragOver = false"
+                @drop.prevent="handleDrop"
+                :class="['border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer', dragOver ? 'border-green-400 bg-green-100/50' : 'border-gray-300 hover:border-green-400 bg-white']"
+                @click="$refs.fileInput.click()"
+              >
+                <svg class="w-10 h-10 text-gray-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                <p class="text-sm font-bold text-gray-600 mb-1">拖拽文件到此处，或点击选择</p>
+                <p class="text-[10px] text-gray-400">支持 .csv 和 .txt 格式，单次最大 5MB / 500条</p>
+                <input ref="fileInput" type="file" accept=".csv,.txt" class="hidden" @change="handleFileSelect" />
+              </div>
+              <!-- 格式说明 -->
+              <div class="space-y-3">
+                <div class="bg-white rounded-xl border border-gray-100 p-4">
+                  <p class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">CSV 格式（推荐）</p>
+                  <pre class="text-xs text-gray-600 font-mono bg-gray-50 rounded-lg p-3 leading-relaxed">question,answer
+PPT多少钱,基础款50元/页起
+能开发票吗,支持普通发票和增值税专用发票</pre>
+                </div>
+                <div class="bg-white rounded-xl border border-gray-100 p-4">
+                  <p class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">TXT 格式</p>
+                  <pre class="text-xs text-gray-600 font-mono bg-gray-50 rounded-lg p-3 leading-relaxed">每段知识用空行分隔。
+每个段落会作为一条知识入库。
+
+第二段知识内容在这里。
+支持多行段落。</pre>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div v-if="showAddKnowledge" class="p-6 bg-blue-50 border-b animate-in fade-in slide-in-from-top-4">
@@ -80,6 +124,8 @@ import { ref } from 'vue';
 import { store } from '../store.js';
 
 const showAddKnowledge = ref(false);
+const showImport = ref(false);
+const dragOver = ref(false);
 const newKnowledgeContent = ref('');
 
 const addKnowledge = async () => {
@@ -98,5 +144,22 @@ const deleteKnowledge = async (id) => {
   if (!confirm("确定移除此知识？AI 将无法再引用它。")) return;
   await fetch(`/api/admin/knowledge/${id}`, { method: 'DELETE' });
   await store.loadKnowledge();
+};
+
+const handleFileSelect = async (e) => {
+  const file = e.target.files?.[0];
+  if (file) {
+    await store.importKnowledgeFile(file);
+    showImport.value = false;
+  }
+};
+
+const handleDrop = async (e) => {
+  dragOver.value = false;
+  const file = e.dataTransfer.files?.[0];
+  if (file) {
+    await store.importKnowledgeFile(file);
+    showImport.value = false;
+  }
 };
 </script>

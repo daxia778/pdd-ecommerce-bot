@@ -16,6 +16,7 @@
           <StatisticsPanel v-show="store.activePanel === 'statistics'" class="flex-1 w-full min-h-0 overflow-y-auto scrollbar-hide" />
           <BuyerSimulator v-show="store.activePanel === 'simulator'" class="flex-1 w-full min-h-0 overflow-y-auto scrollbar-hide" />
           <SettingsPanel v-show="store.activePanel === 'settings'" class="flex-1 w-full min-h-0 overflow-y-auto scrollbar-hide" />
+          <SystemHealthPanel v-show="store.activePanel === 'health'" class="flex-1 w-full min-h-0 overflow-y-auto scrollbar-hide" />
         </div>
       </main>
     </div>
@@ -35,6 +36,7 @@ import KnowledgePanel from './components/KnowledgePanel.vue';
 import StatisticsPanel from './components/StatisticsPanel.vue';
 import BuyerSimulator from './components/BuyerSimulator.vue';
 import SettingsPanel from './components/SettingsPanel.vue';
+import SystemHealthPanel from './components/SystemHealthPanel.vue';
 
 watch(() => store.activePanel, (newVal) => {
   if (newVal === 'knowledge' && store.knowledgeBase.length === 0) {
