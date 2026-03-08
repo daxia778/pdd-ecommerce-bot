@@ -221,11 +221,9 @@ async def start_stale_order_watchdog():
 
 
 class TaskCoordinator:
-    async def create_and_start_pipeline(self, user_id: str, platform: str, requirement: dict):
+    async def create_order(self, user_id: str, platform: str, requirement: dict) -> str:
         """
-        创建新订单并启动生产流水线。
-        - 有 Redis: 推入 RQ 队列（worker.py 消费）
-        - 无 Redis: 直接 asyncio.create_task（当前进程后台运行）
+        创建新订单，初始状态为等待微信对接。
         """
         uid_suffix = str(uuid.uuid4()).replace("-", "")[:4].upper()
         order_sn = f"PPT{datetime.now().strftime('%Y%m%d%H%M%S')}{str(user_id)[-4:]}{uid_suffix}"
@@ -272,7 +270,14 @@ class TaskCoordinator:
         except Exception as e:
             logger.debug(f"企业微信通知跳过: {e}")
 
-        # 3. 分派 PPT 生产任务
+        return order_sn
+
+    def start_pipeline(self, order_sn: str):
+        """
+        分派并启动 PPT 后台生产流水线（流转到 GENERATING）。
+        - 有 Redis: 推入 RQ 队列（worker.py 消费）
+        - 无 Redis: 直接 asyncio.create_task（当前进程后台运行）
+        """
         queue = _get_queue()
         if queue is not None:
             # Redis 模式：推入 RQ 队列
@@ -286,8 +291,6 @@ class TaskCoordinator:
             # asyncio 本地模式
             asyncio.create_task(_async_run_production_pipeline(order_sn))
             logger.info(f"Pipeline | asyncio 本地模式已启动 | 订单: {order_sn}")
-
-        return order_sn
 
 
 task_coordinator = TaskCoordinator()

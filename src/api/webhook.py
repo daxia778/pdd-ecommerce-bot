@@ -204,7 +204,7 @@ async def _process_chat(
     # === PPT 自动化任务触发检测 ===
     if "[[CREATE_ORDER:" in reply:
         try:
-            match = re.search(r"\[\[CREATE_ORDER:(.*?)\]\]", reply)
+            match = re.search(r"\[\[CREATE_ORDER:(.*?)\]\]", reply, re.DOTALL)
             if match:
                 raw_json = match.group(1).strip()
                 try:
@@ -220,7 +220,7 @@ async def _process_chat(
 
                 # Make sure req_data is a dict
                 if isinstance(req_data, dict):
-                    order_sn = await task_coordinator.create_and_start_pipeline(
+                    order_sn = await task_coordinator.create_order(
                         user_id=user_id, platform=platform, requirement=req_data
                     )
 
@@ -583,6 +583,9 @@ async def upload_wechat_qr(
 
     # 广播前端更新
     await manager.broadcast({"event": "wechat_qr_received", "user_id": user_id, "order_sn": order.order_sn})
+
+    # P0 修复：在此环节（收到QR之后）才启动自动化生产流水线
+    task_coordinator.start_pipeline(order.order_sn)
 
     return {
         "status": "ok",
