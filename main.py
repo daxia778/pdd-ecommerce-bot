@@ -290,7 +290,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     from starlette.exceptions import HTTPException as StarletteHTTPException
 
     # 框架级异常应由 FastAPI/Starlette 默认处理器返回正确状态码
-    if isinstance(exc, HTTPException | StarletteHTTPException | RequestValidationError):
+    if isinstance(exc, (HTTPException, StarletteHTTPException, RequestValidationError)):  # noqa: UP038
         raise exc
 
     # P2-Root-Cause-Sweep: 结构化异常日志

@@ -194,7 +194,14 @@ async def get_messages(user_id: str, db: DBSession = Depends(get_db)):
 
     messages = await run_in_db_thread(_get_messages, db)
     return [
-        {"role": m.role, "content": m.content, "created_at": m.created_at.strftime("%H:%M:%S") if m.created_at else ""}
+        {
+            "role": m.role,
+            "content": m.content,
+            "platform": m.platform or "unknown",
+            "sender_type": "customer" if m.role == "user" else "ai",
+            "response_time_ms": m.response_time_ms,
+            "created_at": m.created_at.strftime("%H:%M:%S") if m.created_at else "",
+        }
         for m in messages
     ]
 
@@ -216,9 +223,13 @@ async def get_escalations(db: DBSession = Depends(get_db)):
         {
             "id": e.id,
             "user_id": e.user_id,
+            "platform": e.platform or "unknown",
             "trigger_message": e.trigger_message,
             "ai_reply": e.ai_reply,
+            "reason": e.reason,
             "reason_label": e.reason,
+            "status": e.status,
+            "operator_name": e.operator_name,
             "created_at": e.created_at.strftime("%Y-%m-%d %H:%M:%S") if e.created_at else "",
         }
         for e in escalations
