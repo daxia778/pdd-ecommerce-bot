@@ -9,12 +9,42 @@
             实时对话队列
           </h2>
           <span class="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-semibold">
-            {{ store.sessions.length }} 活跃
+            {{ filteredSessions.length }}/{{ store.sessions.length }}
           </span>
         </div>
+
+        <!-- 搜索框 -->
+        <div class="px-3 pt-3 pb-1">
+          <div class="relative">
+            <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+            </svg>
+            <input
+              v-model="searchQuery"
+              type="text"
+              placeholder="搜索会话..."
+              class="w-full pl-8 pr-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition-all placeholder-gray-400"
+            />
+          </div>
+        </div>
+
+        <!-- 状态筛选 -->
+        <div class="flex gap-1 px-3 py-2">
+          <button
+            v-for="tab in filterTabs" :key="tab.id"
+            @click="sessionFilter = tab.id"
+            :class="[
+              'px-2.5 py-1 text-[10px] font-bold rounded-md transition-all cursor-pointer',
+              sessionFilter === tab.id
+                ? 'bg-blue-100 text-blue-700'
+                : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
+            ]"
+          >{{ tab.name }}</button>
+        </div>
+
         <div class="flex-1 overflow-y-auto p-2 space-y-2 chat-scroll">
           <div
-            v-for="session in store.sessions"
+            v-for="session in filteredSessions"
             :key="session.user_id"
             @click="selectUser(session.user_id)"
             :class="[
@@ -50,8 +80,9 @@
               <span>{{ (session.updated_at || '').split(' ')[1] }}</span>
             </div>
           </div>
-          <div v-if="store.sessions.length === 0" class="flex flex-col items-center justify-center h-40 text-gray-400 font-medium">
-            <p>📭 暂无活跃对话</p>
+          <div v-if="filteredSessions.length === 0" class="flex flex-col items-center justify-center h-40 text-gray-400 font-medium">
+            <svg class="w-10 h-10 mb-2 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
+            <p class="text-xs">{{ searchQuery ? '无匹配结果' : '暂无活跃对话' }}</p>
           </div>
         </div>
       </div>
@@ -103,11 +134,20 @@
         <!-- Messages -->
         <div class="flex-1 overflow-y-auto p-4 space-y-4 chat-scroll" id="chat-window">
           <div v-if="!store.selectedUser" class="flex flex-col items-center justify-center h-full text-gray-300">
-            <svg class="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-                d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-            </svg>
-            <p class="font-medium">未选中用户</p>
+            <!-- 企业级空状态插画 -->
+            <div class="relative w-28 h-28 mb-6">
+              <div class="absolute inset-0 bg-gradient-to-b from-blue-50 to-transparent rounded-full"></div>
+              <svg class="absolute inset-0 w-full h-full" viewBox="0 0 120 120" fill="none">
+                <rect x="25" y="30" width="70" height="55" rx="8" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1.5"/>
+                <rect x="32" y="40" width="35" height="4" rx="2" fill="#cbd5e1"/>
+                <rect x="32" y="50" width="50" height="4" rx="2" fill="#e2e8f0"/>
+                <rect x="32" y="60" width="20" height="4" rx="2" fill="#e2e8f0"/>
+                <circle cx="85" cy="75" r="18" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5"/>
+                <path d="M80 75l3 3 7-7" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <p class="font-bold text-gray-400 text-sm mb-1">选择一个对话</p>
+            <p class="text-xs text-gray-300 text-center leading-relaxed">从左侧列表点选买家会话<br/>查看实时对话记录</p>
           </div>
 
           <template v-for="(msg, index) in store.currentChat" :key="index">
@@ -368,6 +408,36 @@ import QuoteModal from './QuoteModal.vue';
 const manualMessage = ref('');
 const togglingPause = ref(false);
 const isQuoteModalOpen = ref(false);
+const searchQuery = ref('');
+const sessionFilter = ref('all');
+
+const filterTabs = [
+  { id: 'all', name: '全部' },
+  { id: 'ai', name: 'AI 回复' },
+  { id: 'manual', name: '人工接管' },
+];
+
+const filteredSessions = computed(() => {
+  let list = store.sessions;
+
+  // 状态筛选
+  if (sessionFilter.value === 'manual') {
+    list = list.filter(s => store.pausedSessions[s.user_id]);
+  } else if (sessionFilter.value === 'ai') {
+    list = list.filter(s => !store.pausedSessions[s.user_id]);
+  }
+
+  // 搜索过滤
+  if (searchQuery.value.trim()) {
+    const q = searchQuery.value.trim().toLowerCase();
+    list = list.filter(s =>
+      formatUserId(s.user_id).toLowerCase().includes(q) ||
+      (s.platform || '').toLowerCase().includes(q)
+    );
+  }
+
+  return list;
+});
 
 // 根据用户名 hash 选择渐变色
 const AVATAR_GRADIENTS = [
