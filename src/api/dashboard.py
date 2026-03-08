@@ -76,59 +76,57 @@ async def dashboard_page(request: Request):
 @alru_cache(maxsize=1, ttl=5)
 async def _get_stats_cached(db: DBSession):
     """P0.2: 统计防穿透微缓存 (TTL 5s) - 补充完整字段"""
-    active_sessions = db.query(Session).filter(Session.status == SessionStatus.ACTIVE).count()
-    pending_escalations = db.query(Escalation).filter(Escalation.status == EscalationStatus.PENDING).count()
-    active_orders = (
-        db.query(Order)
-        .filter(Order.status.in_([OrderStatus.GENERATING, OrderStatus.PROCESSING, OrderStatus.AWAITING_REVIEW]))
-        .count()
-    )
 
-    # 1. 订单统计
-    shipped_orders = db.query(Order).filter(Order.status == OrderStatus.SHIPPED).count()
-    total_orders = db.query(Order).count()  # 历史订单总数，供看板展示
+    def _get_stats(db_session: DBSession):
+        active_sessions = db_session.query(Session).filter(Session.status == SessionStatus.ACTIVE).count()
+        pending_escalations = db_session.query(Escalation).filter(Escalation.status == EscalationStatus.PENDING).count()
+        active_orders = (
+            db_session.query(Order)
+            .filter(Order.status.in_([OrderStatus.GENERATING, OrderStatus.PROCESSING, OrderStatus.AWAITING_REVIEW]))
+            .count()
+        )
 
-    # 2. 成单转化率：已交付订单 / 总会话数（取最大值避免除零）
-    total_sessions = db.query(Session).count()
-    if total_sessions > 0:
-        conversion_rate = f"{min(shipped_orders / total_sessions * 100, 100):.1f}%"
-    else:
-        conversion_rate = "0.0%"
+        shipped_orders = db_session.query(Order).filter(Order.status == OrderStatus.SHIPPED).count()
+        total_orders = db_session.query(Order).count()
 
-    # 3. 预估营收：已交付订单 × 平均客单价 ¥900（无价格字段时的合理 fallback）
-    avg_order_value = 900
-    total_revenue = f"¥ {shipped_orders * avg_order_value:,}"
+        total_sessions = db_session.query(Session).count()
+        if total_sessions > 0:
+            conversion_rate = f"{min(shipped_orders / total_sessions * 100, 100):.1f}%"
+        else:
+            conversion_rate = "0.0%"
 
-    # 4. AI 智能解决率：未升级 / 总活跃会话
-    total_escalations = db.query(Escalation).count()
-    if total_sessions > 0:
-        escalation_rate = total_escalations / total_sessions
-        satisfaction_rate = f"{max((1 - escalation_rate) * 100, 0):.1f}%"
-    else:
-        satisfaction_rate = "98.5%"  # 无数据时显示示例值
+        avg_order_value = 900
+        total_revenue = f"¥ {shipped_orders * avg_order_value:,}"
 
-    # 5. P2-2: 平均响应耗时 — 从 Message.response_time_ms 读取真实数据
-    #    仅统计有耗时记录的 AI 回复消息（role=assistant），确保准确性
-    avg_ms_row = (
-        db.query(func.avg(Message.response_time_ms))
-        .filter(Message.role == "assistant", Message.response_time_ms.is_not(None))
-        .scalar()
-    )
-    if avg_ms_row and avg_ms_row > 0:
-        avg_response_time = f"{avg_ms_row / 1000:.1f}s"
-    else:
-        avg_response_time = "暂无数据"
+        total_escalations = db_session.query(Escalation).count()
+        if total_sessions > 0:
+            escalation_rate = total_escalations / total_sessions
+            satisfaction_rate = f"{max((1 - escalation_rate) * 100, 0):.1f}%"
+        else:
+            satisfaction_rate = "98.5%"
 
-    return {
-        "active_sessions": active_sessions,
-        "pending_escalations": pending_escalations,
-        "active_orders": active_orders,
-        "total_orders": total_orders,
-        "conversion_rate": conversion_rate,
-        "total_revenue": total_revenue,
-        "satisfaction_rate": satisfaction_rate,
-        "avg_response_time": avg_response_time,
-    }
+        avg_ms_row = (
+            db_session.query(func.avg(Message.response_time_ms))
+            .filter(Message.role == "assistant", Message.response_time_ms.is_not(None))
+            .scalar()
+        )
+        if avg_ms_row and avg_ms_row > 0:
+            avg_response_time = f"{avg_ms_row / 1000:.1f}s"
+        else:
+            avg_response_time = "暂无数据"
+
+        return {
+            "active_sessions": active_sessions,
+            "pending_escalations": pending_escalations,
+            "active_orders": active_orders,
+            "total_orders": total_orders,
+            "conversion_rate": conversion_rate,
+            "total_revenue": total_revenue,
+            "satisfaction_rate": satisfaction_rate,
+            "avg_response_time": avg_response_time,
+        }
+
+    return await run_in_db_thread(_get_stats, db)
 
 
 @router.get("/api/dashboard/stats")
@@ -143,12 +141,17 @@ async def get_stats_hourly(db: DBSession = Depends(get_db)):
     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     tomorrow = today + timedelta(days=1)
 
-    rows = (
-        db.query(func.strftime("%H", Message.created_at).label("hour"), func.count(Message.id).label("count"))
-        .filter(Message.created_at >= today, Message.created_at < tomorrow)
-        .group_by("hour")
-        .all()
-    )
+    def _get_hourly(db_session: DBSession):
+        return (
+            db_session.query(
+                func.strftime("%H", Message.created_at).label("hour"), func.count(Message.id).label("count")
+            )
+            .filter(Message.created_at >= today, Message.created_at < tomorrow)
+            .group_by("hour")
+            .all()
+        )
+
+    rows = await run_in_db_thread(_get_hourly, db)
 
     # 将数据增展为 24 个小时的完整点
     hour_map = {row.hour: row.count for row in rows}
@@ -161,7 +164,11 @@ async def get_stats_hourly(db: DBSession = Depends(get_db)):
 @router.get("/api/dashboard/sessions")
 async def get_sessions(db: DBSession = Depends(get_db)):
     """获取最近的会话列表"""
-    sessions = db.query(Session).order_by(desc(Session.updated_at)).limit(20).all()
+
+    def _get_sessions(db_session: DBSession):
+        return db_session.query(Session).order_by(desc(Session.updated_at)).limit(20).all()
+
+    sessions = await run_in_db_thread(_get_sessions, db)
     return [
         {
             "id": s.id,
@@ -178,7 +185,11 @@ async def get_sessions(db: DBSession = Depends(get_db)):
 @router.get("/api/dashboard/messages/{user_id}")
 async def get_messages(user_id: str, db: DBSession = Depends(get_db)):
     """获取指定用户的历史消息"""
-    messages = db.query(Message).filter(Message.user_id == user_id).order_by(Message.created_at).all()
+
+    def _get_messages(db_session: DBSession):
+        return db_session.query(Message).filter(Message.user_id == user_id).order_by(Message.created_at).all()
+
+    messages = await run_in_db_thread(_get_messages, db)
     return [
         {"role": m.role, "content": m.content, "created_at": m.created_at.strftime("%H:%M:%S") if m.created_at else ""}
         for m in messages
@@ -188,12 +199,16 @@ async def get_messages(user_id: str, db: DBSession = Depends(get_db)):
 @router.get("/api/dashboard/escalations")
 async def get_escalations(db: DBSession = Depends(get_db)):
     """获取需要人工处理的升级记录"""
-    escalations = (
-        db.query(Escalation)
-        .filter(Escalation.status == EscalationStatus.PENDING)
-        .order_by(desc(Escalation.created_at))
-        .all()
-    )
+
+    def _get_escalations(db_session: DBSession):
+        return (
+            db_session.query(Escalation)
+            .filter(Escalation.status == EscalationStatus.PENDING)
+            .order_by(desc(Escalation.created_at))
+            .all()
+        )
+
+    escalations = await run_in_db_thread(_get_escalations, db)
     return [
         {
             "id": e.id,
@@ -211,9 +226,12 @@ async def get_escalations(db: DBSession = Depends(get_db)):
 async def resolve_escalation(esc_id: int, db: DBSession = Depends(get_db)):
     """
     标记升级问题为已处理。
-    使用 db_service 确保：状态流转 + 会话状态恢复 + resolved_at 记录均正确完成
     """
-    esc = db_service.resolve_escalation(db, escalation_id=esc_id)
+
+    def _resolve(db_session: DBSession):
+        return db_service.resolve_escalation(db_session, escalation_id=esc_id)
+
+    esc = await run_in_db_thread(_resolve, db)
     if esc:
         await manager.broadcast({"event": "update", "action": "resolve_escalation"})
         return {"status": "success"}
@@ -223,12 +241,16 @@ async def resolve_escalation(esc_id: int, db: DBSession = Depends(get_db)):
 @router.get("/api/dashboard/orders")
 async def get_orders(status: str | None = None, show_all: bool = False, db: DBSession = Depends(get_db)):
     """获取 PPT 工单列表。默认只返回未交付的工单（req_fixed / processing）。"""
-    q = db.query(Order)
-    if status:
-        q = q.filter(Order.status == status)
-    elif not show_all:
-        q = q.filter(Order.status.in_([OrderStatus.REQ_FIXED, OrderStatus.PROCESSING, OrderStatus.AWAITING_REVIEW]))
-    orders = q.order_by(desc(Order.created_at)).limit(50).all()
+
+    def _get_orders(db_session: DBSession):
+        q = db_session.query(Order)
+        if status:
+            q = q.filter(Order.status == status)
+        elif not show_all:
+            q = q.filter(Order.status.in_([OrderStatus.REQ_FIXED, OrderStatus.PROCESSING, OrderStatus.AWAITING_REVIEW]))
+        return q.order_by(desc(Order.created_at)).limit(50).all()
+
+    orders = await run_in_db_thread(_get_orders, db)
     return [
         {
             "id": o.id,
