@@ -9,7 +9,10 @@
 P0-5 修复: Escalation 新增 claimed_at 字段，不再误用 resolved_at 记录接单时间
 """
 
+import asyncio
+import functools
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, create_engine
@@ -169,6 +172,24 @@ def _make_engine():
 
 engine = _make_engine()
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+
+# P0-Fix-2: 专用 DB 线程池 — 将同步 SQLAlchemy 操作卸载到独立线程，
+# 避免在 async 路由中阻塞 asyncio 事件循环。
+# max_workers=4: 足够覆盖并发 webhook + chat + dashboard 查询场景
+_db_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="db-io")
+
+
+async def run_in_db_thread(func, *args, **kwargs):
+    """
+    P0-Fix-2: 将同步 DB 函数卸载到线程池执行，返回 awaitable。
+    用法: result = await run_in_db_thread(db_service.create_escalation, db, user_id=..., ...)
+    注意: 每次调用应传入独立的 db session（不要跨线程共享 session）。
+    """
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _db_executor,
+        functools.partial(func, *args, **kwargs),
+    )
 
 
 def create_tables():

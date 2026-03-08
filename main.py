@@ -5,12 +5,11 @@
 import asyncio  # P0-1: 移至顶部，避免 lifespan 预热时 name error
 import os
 import sys
-import time
 import uuid
-from collections import defaultdict
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from cachetools import TTLCache
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -94,19 +93,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️ RAG 模型预热失败（不影响服务启动）: {e}")
 
-    # P1-3: 定期清理过期的限流记录，防止 _rate_limit_store 无限增长
-    async def _cleanup_rate_limit_store():
-        while True:
-            await asyncio.sleep(300)  # 每 5 分钟清理一次
-            cutoff = time.time() - 60
-            expired_ips = [ip for ip, ts_list in _rate_limit_store.items() if not any(t > cutoff for t in ts_list)]
-            for ip in expired_ips:
-                del _rate_limit_store[ip]
-            if expired_ips:
-                logger.debug(f"限流存储清理 | 清除 {len(expired_ips)} 条过期 IP 记录")
-
     asyncio.create_task(_prewarm_rag())
-    asyncio.create_task(_cleanup_rate_limit_store())
 
     yield  # 应用运行中
 
@@ -143,20 +130,17 @@ app.mount("/files", StaticFiles(directory="data/output"), name="generated_files"
 # ===== Prometheus 监控埋点 =====
 Instrumentator().instrument(app).expose(app)
 
-# ===== P1-1: 引入内存限流中间件 (Fallback for Redis) =====
-# 注意: time / defaultdict 已在文件顶部导入
-
-_rate_limit_store = defaultdict(list)
+# ===== P0-Fix-3: 基于 TTLCache 的内存限流器 =====
+# 每个 IP 的访问计数在 60s 后自动淘汰，无需手动清理
+_rate_limit_store: TTLCache = TTLCache(maxsize=10000, ttl=60)
 
 
 @app.middleware("http")
 async def request_context_middleware(request: Request, call_next):
     """注入 Request-ID 到日志上下文"""
-    # P0-1: uuid 已在文件顶部导入
-    request_id = str(uuid.uuid4())[:8]  # 取短 ID
+    request_id = str(uuid.uuid4())[:8]
     with logger.contextualize(request_id=f"REQ-{request_id}"):
         response = await call_next(request)
-        # 将 Request-ID 返回给客户端头（便于排查）
         response.headers["X-Request-ID"] = request_id
         return response
 
@@ -167,18 +151,14 @@ async def rate_limit_middleware(request: Request, call_next):
     if request.url.path.startswith("/api/v1/chat"):
         client_ip = request.client.host if request.client else "unknown"
 
-        # 简单滑动窗口限流：每分钟 60 次 (In-memory fallback)
-        now = time.time()
-        # 清理 1 分钟前的记录
-        _rate_limit_store[client_ip] = [t for t in _rate_limit_store[client_ip] if now - t < 60]
-
-        if len(_rate_limit_store[client_ip]) >= 60:
+        # P0-Fix-3: 基于 TTLCache 的滑动窗口限流，每分钟 60 次
+        current_count = _rate_limit_store.get(client_ip, 0)
+        if current_count >= 60:
             logger.warning(f"触发限流 | IP: {client_ip} | 请求已被拦截")
             return JSONResponse(
                 status_code=429, content={"status": "error", "message": "请求过于频繁，请稍后再试 (Too Many Requests)"}
             )
-
-        _rate_limit_store[client_ip].append(now)
+        _rate_limit_store[client_ip] = current_count + 1
 
     response = await call_next(request)
     return response
@@ -208,7 +188,18 @@ async def api_root():
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """全局异常拦截：防止未处理异常导致进程崩溃或服务假死"""
+    """
+    全局异常拦截：防止未处理异常导致进程崩溃或服务假死。
+    P0-Fix-1: 显式放行框架级异常（HTTPException / RequestValidationError），
+    避免将 401/404/422 等误转为 500。
+    """
+    from fastapi.exceptions import RequestValidationError
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+
+    # 框架级异常应由 FastAPI/Starlette 默认处理器返回正确状态码
+    if isinstance(exc, HTTPException | StarletteHTTPException | RequestValidationError):
+        raise exc
+
     logger.error(f"全局未捕获异常 | URI: {request.url.path} | 错误: {exc}", exc_info=True)
     return JSONResponse(
         status_code=500,

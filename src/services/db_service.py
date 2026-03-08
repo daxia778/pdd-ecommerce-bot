@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from src.api.websocket_manager import manager as ws_manager
 from src.models.database import Escalation, Message
 from src.models.database import Session as SessionModel
+from src.models.enums import SessionStatus
 from src.utils.logger import logger
 
 # ===== 消息操作 =====
@@ -236,7 +237,7 @@ def resolve_escalation(
         # 同时把 session 状态恢复 active
         session = db.query(SessionModel).filter(SessionModel.user_id == esc.user_id).first()
         if session:
-            session.status = "active"
+            session.status = SessionStatus.ACTIVE
             db.commit()
         logger.info(f"升级已处理 | id: {escalation_id}")
     return esc

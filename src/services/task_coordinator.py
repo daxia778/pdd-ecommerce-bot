@@ -14,6 +14,7 @@ from datetime import datetime
 
 from config.settings import settings
 from src.models.database import Order, SessionLocal
+from src.models.enums import OrderStatus
 from src.utils.logger import logger
 
 # ===== 懒加载 Redis/RQ（不在模块加载时执行，避免崩溃）=====
@@ -70,7 +71,7 @@ async def _async_run_production_pipeline(order_sn: str):
         req = json.loads(order.requirement_json or "{}")
 
         # --- Step 1: 调用 NotebookLM（Playwright 自动化）生成 ---
-        order.status = "generating"
+        order.status = OrderStatus.GENERATING
         order.generated_at = datetime.now()
         db.commit()
         logger.info(f"Pipeline | 开始生成 | 订单: {order_sn} | 主题: {req.get('topic')}")
@@ -96,7 +97,7 @@ async def _async_run_production_pipeline(order_sn: str):
         db.commit()
 
         # --- Step 2: 后处理（去水印）---
-        order.status = "processing"
+        order.status = OrderStatus.PROCESSING
         db.commit()
 
         try:
@@ -110,7 +111,7 @@ async def _async_run_production_pipeline(order_sn: str):
         order.clean_file_url = clean_url
 
         # --- Step 3: 进入待审核状态 ---
-        order.status = "awaiting_review"
+        order.status = OrderStatus.AWAITING_REVIEW
         db.commit()
 
         logger.info(f"Pipeline | ✅ 任务完成！等待人工审核 | 订单: {order_sn} | 文件: {clean_url}")
@@ -120,7 +121,7 @@ async def _async_run_production_pipeline(order_sn: str):
 
         logger.error(f"Pipeline | ❌ 流水线执行异常 [{order_sn}]: {e}", exc_info=True)
         if order:
-            order.status = "failed"
+            order.status = OrderStatus.FAILED
             order.error_message = f"流水线异常: {str(e)}\n{traceback.format_exc()}"
             try:
                 db.commit()
@@ -161,7 +162,7 @@ class TaskCoordinator:
                 platform=platform,
                 order_type=order_type,
                 urgency=urgency,
-                status="wechat_pending",  # 等待顾客发送微信二维码
+                status=OrderStatus.WECHAT_PENDING,
                 requirement_json=json.dumps(requirement, ensure_ascii=False),
             )
             db.add(new_order)

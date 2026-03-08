@@ -102,23 +102,16 @@ class SessionManager:
             logger.error(f"Session 写库失败 | user_id: {user_id} | {e}")
 
     # ------------------------------------------------------------------
-    # 读操作 — Memory 优先，未命中从 DB 加载
+    # 读操作 — Memory 优先，未命中从 DB 加载（同步版本，向后兼容）
     # ------------------------------------------------------------------
 
     def get_history(self, user_id: str, db=None) -> list[dict]:
-        """
-        P1-1: 获取用户对话历史（同步读，返回副本防止外部修改污染缓存）
-        """
+        """同步读取用户对话历史（返回副本防止外部修改污染缓存）"""
         key = self._redis_key(user_id)
-
-        # 1. 尝试从 Memory 取（返回浅拷贝，防止外部修改污染 store）
         if key in self._store:
             return list(self._store[key])
-
-        # 2. 从 DB 穿透查询
         if db is not None:
             return self._load_from_db(user_id, db)
-
         return []
 
     def _load_from_db(self, user_id: str, db) -> list[dict]:
@@ -131,17 +124,73 @@ class SessionManager:
                 return []
 
             history = [{"role": m.role, "content": m.content} for m in msgs]
-
-            # 回填 Memory
             key = self._redis_key(user_id)
             self._store[key] = history
-
             logger.info(f"Session 从DB加载并回填缓存 | user_id: {user_id} | 条数: {len(history)}")
             return history
-
         except Exception as e:
             logger.error(f"Session 从DB加载失败 | user_id: {user_id} | {e}")
             return []
+
+    # ------------------------------------------------------------------
+    # P0-Fix-2: 异步安全接口 — DB 操作卸载到线程池
+    #   FastAPI async 路由中必须使用这些方法，避免同步 SQLAlchemy
+    #   阻塞 asyncio 主事件循环导致并发请求被挂起。
+    # ------------------------------------------------------------------
+
+    async def add_message_async_safe(
+        self,
+        user_id: str,
+        role: str,
+        content: str,
+        db=None,
+        platform: str = "test",
+        response_time_ms: int | None = None,
+    ) -> None:
+        """异步安全写入：内存写同步完成，DB 写卸载到线程池。"""
+        self._write_to_memory(user_id, role, content)
+        if db is not None:
+            from src.models.database import run_in_db_thread
+
+            await run_in_db_thread(
+                self._persist_to_db,
+                user_id,
+                role,
+                content,
+                db,
+                platform,
+                response_time_ms=response_time_ms,
+            )
+
+    async def get_history_async_safe(self, user_id: str, db=None) -> list[dict]:
+        """异步安全读取：内存命中直接返回，DB 穿透时卸载到线程池。"""
+        key = self._redis_key(user_id)
+        if key in self._store:
+            return list(self._store[key])
+        if db is not None:
+            from src.models.database import run_in_db_thread
+
+            return await run_in_db_thread(self._load_from_db, user_id, db)
+        return []
+
+    async def is_ai_paused_async_safe(self, user_id: str, db=None) -> bool:
+        """异步安全检查 AI 暂停状态。"""
+        pause_key = self._redis_pause_key(user_id)
+        if pause_key in self._pause_store:
+            return self._pause_store[pause_key]
+        if db is not None:
+            from src.models.database import run_in_db_thread
+
+            def _check_paused():
+                from src.models.database import Session as SessionModel
+
+                session_rec = db.query(SessionModel).filter_by(user_id=user_id).first()
+                is_paused = session_rec.is_ai_paused if session_rec else False
+                self._pause_store[pause_key] = is_paused
+                return is_paused
+
+            return await run_in_db_thread(_check_paused)
+        return False
 
     # ------------------------------------------------------------------
     # 管理操作
