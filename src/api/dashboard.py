@@ -242,7 +242,8 @@ async def extract_requirements(user_id: str, db: DBSession = Depends(get_db)):
     """
     从指定用户的对话中提取结构化需求信息。
     优先从 AI 生成的 [[CREATE_ORDER:...]] 标记中解析；
-    若无标记，则从对话上下文中基于关键词启发式提取。
+    若无标记，则从买家消息中基于关键词启发式提取。
+    返回每个字段的置信度（0 = 未提取到，不展示置信度）。
     """
     import json
     import re
@@ -251,70 +252,95 @@ async def extract_requirements(user_id: str, db: DBSession = Depends(get_db)):
         return db_session.query(Message).filter(Message.user_id == user_id).order_by(Message.created_at).all()
 
     messages = await run_in_db_thread(_get_all_messages, db)
-    all_content = " ".join([m.content for m in messages])
 
-    result = {
-        "topic": "",
-        "pages": "",
-        "style": "",
-        "deadline": "",
-        "budget": "",
-        "audience": "",
-        "outline": "",
-        "assets": "",
-        "source": "none",  # 'order_token' | 'heuristic' | 'none'
-    }
+    # 分离买家消息和 AI 消息
+    buyer_msgs = [m.content for m in messages if m.role == "user"]
+    all_msgs = [m.content for m in messages]
+    buyer_content = " ".join(buyer_msgs)
+    all_content = " ".join(all_msgs)
 
-    # 1. 优先从 [[CREATE_ORDER:...]] 提取
+    # 每个字段的结果和置信度（0 = 未检测到）
+    fields = ["topic", "pages", "style", "deadline", "budget", "audience", "outline", "assets"]
+    result = {k: "" for k in fields}
+    confidence = {k: 0 for k in fields}
+    result["source"] = "none"
+
+    # 1. 优先从 [[CREATE_ORDER:...]] 提取（高置信度）
     order_match = re.search(r"\[\[CREATE_ORDER:(.*?)\]\]", all_content, re.DOTALL)
     if order_match:
         try:
             raw = order_match.group(1).strip()
             data = json.loads(raw)
-            result["topic"] = data.get("topic", "")
-            result["pages"] = str(data.get("pages", ""))
-            result["style"] = data.get("style", "")
-            result["deadline"] = data.get("deadline", "")
-            result["budget"] = str(data.get("budget", ""))
-            result["audience"] = data.get("audience", "")
-            result["outline"] = data.get("outline", data.get("details", ""))
-            result["assets"] = data.get("assets", "")
+            field_map = {
+                "topic": "topic",
+                "pages": "pages",
+                "style": "style",
+                "deadline": "deadline",
+                "budget": "budget",
+                "audience": "audience",
+                "outline": "outline",
+                "assets": "assets",
+            }
+            for field, json_key in field_map.items():
+                val = (
+                    data.get(json_key, "") or data.get("details", "")
+                    if json_key == "outline"
+                    else data.get(json_key, "")
+                )
+                if val and str(val).strip():
+                    result[field] = str(val).strip()
+                    confidence[field] = 95 if field in ("topic", "pages") else 88
             result["source"] = "order_token"
+            result["confidence"] = confidence
             return result
         except Exception:
             pass
 
-    # 2. 启发式关键词提取
-    # 页数
-    pages_m = re.search(r"(\d+)\s*[页pP]", all_content)
+    # 2. 启发式关键词提取 — 仅从买家消息中提取
+    # 页数（买家提到的）
+    pages_m = re.search(r"(\d+)\s*[页pP]", buyer_content)
     if pages_m:
         result["pages"] = f"{pages_m.group(1)}页"
-    # 主题
-    topic_keywords = ["计划书", "汇报", "方案", "PPT", "报告", "总结", "投标", "答辩", "展示", "培训"]
-    for kw in topic_keywords:
-        if kw in all_content:
-            # 取关键词前后20字作为主题
-            idx = all_content.index(kw)
-            start = max(0, idx - 10)
-            end = min(len(all_content), idx + len(kw) + 10)
-            result["topic"] = all_content[start:end].strip()
+        confidence["pages"] = 90
+
+    # 主题：从买家消息中寻找"做/要/需要 + 名词短语"
+    topic_patterns = [
+        r"(?:做|要|需要|定制|制作)\s*([\u4e00-\u9fa5a-zA-Z]{2,15}(?:PPT|ppt|计划书|报告|方案|汇报|总结|答辩|展示|投标|培训|介绍|宣传))",
+        r"([\u4e00-\u9fa5]{2,8}(?:计划书|报告|方案|汇报|总结|答辩|投标|培训|宣传|介绍))",
+    ]
+    for pat in topic_patterns:
+        topic_m = re.search(pat, buyer_content)
+        if topic_m:
+            result["topic"] = topic_m.group(1).strip()
+            confidence["topic"] = 80
             break
-    # 风格
-    style_keywords = ["商务", "学术", "简约", "科技", "高端", "创投", "正规", "现代"]
+
+    # 风格（从买家消息中）
+    style_keywords = ["商务", "学术", "简约", "科技", "高端", "创投", "正规", "现代", "简洁", "大气"]
     for kw in style_keywords:
-        if kw in all_content:
+        if kw in buyer_content:
             result["style"] = kw
+            confidence["style"] = 75
             break
-    # 时间
+
+    # 时间（从买家消息中）
     deadline_keywords = ["明天", "后天", "本周", "下周", "月底", "紧急", "加急", "尽快", "马上"]
     for kw in deadline_keywords:
-        if kw in all_content:
+        if kw in buyer_content:
             result["deadline"] = kw
+            confidence["deadline"] = 82
             break
 
-    if any(result[k] for k in ["topic", "pages", "style", "deadline"]):
+    # 预算（从买家消息中）
+    budget_m = re.search(r"(\d+)\s*[元块]", buyer_content)
+    if budget_m:
+        result["budget"] = f"{budget_m.group(1)}元"
+        confidence["budget"] = 78
+
+    if any(result[k] for k in fields):
         result["source"] = "heuristic"
 
+    result["confidence"] = confidence
     return result
 
 
