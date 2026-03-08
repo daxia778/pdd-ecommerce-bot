@@ -16,7 +16,7 @@ import asyncio
 import functools
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
@@ -32,9 +32,13 @@ RERANK_MODEL_NAME = "BAAI/bge-reranker-base"
 # P0-4: 修正集合名称，与业务一致
 COLLECTION_NAME = "pdd_shop_knowledge"
 
-# P0-FIX: 独立线程池，用于卸载 CPU 密集型的 Embedding/Rerank 计算
-# max_workers=2: 限制并发模型推理数量，避免 OOM（单模型已占用 ~200MB 内存）
-_model_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="rag-model")
+# P0-FIX & P1-2: 支持 ProcessPoolExecutor 选项并加入线程池超时降级
+USE_PROCESS_POOL = os.getenv("RAG_USE_PROCESS_POOL", "false").lower() == "true"
+if USE_PROCESS_POOL:
+    # 注意: ProcessPool 需要依赖方法 picklable，可能对 chromadb_client 有局限，实验特性。
+    _model_executor = ProcessPoolExecutor(max_workers=2)
+else:
+    _model_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="rag-model")
 
 # 懒加载 - 避免启动时长时间等待
 _sentence_model = None
@@ -225,19 +229,28 @@ class RAGEngine:
         model.encode() 和 CrossEncoder.predict() 会阻塞 asyncio 主事件循环，
         导致所有并发的 HTTP / WebSocket 请求被挂起。
 
-        内部通过 ThreadPoolExecutor 在独立线程中执行同步 retrieve()，
-        主事件循环保持空闲，可继续处理其他 I/O。
+        P1-2: 新增 async 等待的全局超时机制 (10 秒)。如果超时则自动降级返回空结果。
         """
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            _model_executor,
-            functools.partial(
-                self.retrieve,
-                query=query,
-                top_k=top_k,
-                relevance_threshold=relevance_threshold,
-            ),
-        )
+        try:
+            return await asyncio.wait_for(
+                loop.run_in_executor(
+                    _model_executor,
+                    functools.partial(
+                        self.retrieve,
+                        query=query,
+                        top_k=top_k,
+                        relevance_threshold=relevance_threshold,
+                    ),
+                ),
+                timeout=10.0,
+            )
+        except asyncio.TimeoutError:
+            logger.error("🚨 RAG 异步检索超时 (10s)，触发降级：放弃知识库查询！")
+            return []
+        except Exception as e:
+            logger.error(f"🚨 RAG 异步检索发生异常: {e}")
+            return []
 
     def build_context(self, retrieved_docs: list[dict]) -> str:
         """将检索结果组装为 Prompt 上下文字符串"""

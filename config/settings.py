@@ -49,11 +49,11 @@ class Settings(BaseSettings):
 
     # ===== Admin Auth =====
     admin_username: str = "admin"
-    admin_password: str = "pddbot2026"
+    admin_password: str = ""  # L1: 强制要求在 .env 中配置（不再硬编码默认密码）
     admin_password_hash: str = ""
 
     # JWT 签名密钥（生产环境务必在 .env 中设置为随机长字符串）
-    jwt_secret_key: str = "dev-secret-key-change-in-prod"
+    jwt_secret_key: str = ""  # L1: 强制要求在 .env 中配置
 
     # ===== CORS 配置 =====
     # 逗号分隔的允许跨域来源；生产环境改为实际域名

@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime
 
 from config.settings import settings
+from src.core.order_state_machine import transition_order
 from src.models.database import Order, SessionLocal
 from src.models.enums import OrderStatus
 from src.utils.logger import logger
@@ -71,9 +72,7 @@ async def _async_run_production_pipeline(order_sn: str):
         req = json.loads(order.requirement_json or "{}")
 
         # --- Step 1: 调用 NotebookLM（Playwright 自动化）生成 ---
-        order.status = OrderStatus.GENERATING
-        order.generated_at = datetime.now()
-        db.commit()
+        transition_order(order, OrderStatus.GENERATING, db=db)
         logger.info(f"Pipeline | 开始生成 | 订单: {order_sn} | 主题: {req.get('topic')}")
 
         from src.services.notebooklm_client import notebooklm_client
@@ -97,8 +96,7 @@ async def _async_run_production_pipeline(order_sn: str):
         db.commit()
 
         # --- Step 2: 后处理（去水印）---
-        order.status = OrderStatus.PROCESSING
-        db.commit()
+        transition_order(order, OrderStatus.PROCESSING, db=db)
 
         try:
             # P1-2: 去水印步骤独立超时
@@ -111,8 +109,7 @@ async def _async_run_production_pipeline(order_sn: str):
         order.clean_file_url = clean_url
 
         # --- Step 3: 进入待审核状态 ---
-        order.status = OrderStatus.AWAITING_REVIEW
-        db.commit()
+        transition_order(order, OrderStatus.AWAITING_REVIEW, db=db)
 
         logger.info(f"Pipeline | ✅ 任务完成！等待人工审核 | 订单: {order_sn} | 文件: {clean_url}")
 
@@ -121,10 +118,9 @@ async def _async_run_production_pipeline(order_sn: str):
 
         logger.error(f"Pipeline | ❌ 流水线执行异常 [{order_sn}]: {e}", exc_info=True)
         if order:
-            order.status = OrderStatus.FAILED
-            order.error_message = f"流水线异常: {str(e)}\n{traceback.format_exc()}"
+            err_msg = f"流水线异常: {str(e)}\n{traceback.format_exc()}"
             try:
-                db.commit()
+                transition_order(order, OrderStatus.FAILED, db=db, error_message=err_msg)
             except Exception:
                 db.rollback()
     finally:
@@ -170,19 +166,20 @@ def recover_stale_orders() -> int:
         )
 
         for order in stale_orders:
-            order.status = OrderStatus.FAILED
-            order.error_message = (
+            err_msg = (
                 f"[Watchdog] 订单在 {order.status} 状态超过 {STALE_ORDER_TIMEOUT_MINUTES} 分钟，"
                 f"已被自动回收。可能原因：进程被强杀、Playwright 超时或网络异常。"
             )
-            recovered_count += 1
-            logger.warning(
-                f"Watchdog | 🔄 回收死单 | order_sn: {order.order_sn} | "
-                f"原状态: {order.status} | updated_at: {order.updated_at}"
-            )
-
-        if recovered_count > 0:
-            db.commit()
+            old_status = order.status
+            try:
+                transition_order(order, OrderStatus.FAILED, db=db, error_message=err_msg)
+                recovered_count += 1
+                logger.warning(
+                    f"Watchdog | 🔄 回收死单 | order_sn: {order.order_sn} | "
+                    f"原状态: {old_status} | updated_at: {order.updated_at}"
+                )
+            except Exception as e:
+                logger.error(f"Watchdog 回收状态转换失败: {e}")
             logger.info(f"Watchdog | ✅ 本轮巡检完成，回收了 {recovered_count} 个死单")
         else:
             logger.debug("Watchdog | 本轮巡检完成，无死单需要回收")

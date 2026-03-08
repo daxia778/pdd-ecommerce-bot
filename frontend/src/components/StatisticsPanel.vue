@@ -14,7 +14,7 @@
       <div v-else class="space-y-6">
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
           <!-- Card 1: 今日活跃会话 -->
-          <div class="bg-gradient-to-br from-blue-50 to-white p-5 rounded-2xl shadow-sm border border-blue-100 flex flex-col relative overflow-hidden group hover:shadow-md transition-shadow min-w-0">
+          <div class="bg-gradient-to-br from-blue-50 to-white p-5 rounded-2xl shadow-sm border border-blue-100/80 flex flex-col relative overflow-hidden group hover:shadow-lg hover:scale-[1.02] transition-all duration-300 min-w-0 cursor-default">
             <div class="absolute -top-4 -right-4 p-8 bg-blue-500 rounded-full opacity-5 group-hover:scale-110 transition-transform duration-500"></div>
             <div class="absolute top-3 right-3 opacity-30 group-hover:opacity-70 transition-opacity">
                <svg class="w-6 h-6 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z"></path></svg>
@@ -28,7 +28,7 @@
           </div>
 
           <!-- Card 2: 待处理干预请求 -->
-          <div class="bg-gradient-to-br from-red-50 to-white p-5 rounded-2xl shadow-sm border border-red-100 flex flex-col relative overflow-hidden group hover:shadow-md transition-shadow min-w-0">
+          <div class="bg-gradient-to-br from-red-50 to-white p-5 rounded-2xl shadow-sm border border-red-100/80 flex flex-col relative overflow-hidden group hover:shadow-lg hover:scale-[1.02] transition-all duration-300 min-w-0 cursor-default">
             <div class="absolute -top-4 -right-4 p-8 bg-red-500 rounded-full opacity-5 group-hover:scale-110 transition-transform duration-500"></div>
             <div class="absolute top-3 right-3 opacity-30 group-hover:opacity-70 transition-opacity">
                <svg class="w-6 h-6 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
@@ -42,7 +42,7 @@
           </div>
 
           <!-- Card 3: AI 独立解决率 -->
-          <div class="bg-gradient-to-br from-indigo-50 to-white p-5 rounded-2xl shadow-sm border border-indigo-100 flex flex-col relative overflow-hidden group hover:shadow-md transition-shadow min-w-0">
+          <div class="bg-gradient-to-br from-indigo-50 to-white p-5 rounded-2xl shadow-sm border border-indigo-100/80 flex flex-col relative overflow-hidden group hover:shadow-lg hover:scale-[1.02] transition-all duration-300 min-w-0 cursor-default">
             <div class="absolute -top-4 -right-4 p-8 bg-indigo-500 rounded-full opacity-5 group-hover:scale-110 transition-transform duration-500"></div>
             <div class="absolute top-3 right-3 opacity-30 group-hover:opacity-70 transition-opacity">
                <svg class="w-6 h-6 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
@@ -55,7 +55,7 @@
           </div>
 
           <!-- Card 4: 成单转化率 -->
-          <div class="bg-gradient-to-br from-purple-50 to-white p-5 rounded-2xl shadow-sm border border-purple-100 flex flex-col relative overflow-hidden group hover:shadow-md transition-shadow min-w-0">
+          <div class="bg-gradient-to-br from-purple-50 to-white p-5 rounded-2xl shadow-sm border border-purple-100/80 flex flex-col relative overflow-hidden group hover:shadow-lg hover:scale-[1.02] transition-all duration-300 min-w-0 cursor-default">
             <div class="absolute -top-4 -right-4 p-8 bg-purple-500 rounded-full opacity-5 group-hover:scale-110 transition-transform duration-500"></div>
             <div class="absolute top-3 right-3 opacity-30 group-hover:opacity-70 transition-opacity">
                <svg class="w-6 h-6 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path></svg>

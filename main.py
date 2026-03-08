@@ -5,7 +5,6 @@
 import asyncio  # P0-1: 移至顶部，避免 lifespan 预热时 name error
 import os
 import sys
-import uuid
 from contextlib import asynccontextmanager
 
 from cachetools import TTLCache
@@ -24,6 +23,8 @@ from src.api.admin import router as admin_router
 from src.api.dashboard import public_router, ws_router
 from src.api.dashboard import router as dashboard_router
 from src.api.webhook import router as webhook_router
+from src.services.message_retry_queue import retry_queue
+from src.services.task_coordinator import start_stale_order_watchdog
 from src.utils.logger import logger
 
 
@@ -45,14 +46,24 @@ async def lifespan(app: FastAPI):
     os.makedirs("data/chroma", exist_ok=True)
     os.makedirs("data/output", exist_ok=True)  # PPT 生成输出目录
 
-    # === 初始化 SQLite 数据库（建表，幂等）===
+    # === L1 企业化: 使用 Alembic 管理数据库版本 ===
+    # 替代原有的 create_tables()，确保数据库结构变更有完整的版本追踪。
+    # 新增表/字段时，使用 `alembic revision --autogenerate -m "描述"` 生成迁移脚本，
+    # 应用启动时自动执行 `alembic upgrade head`。
     try:
+        from alembic import command as alembic_command
+        from alembic.config import Config as AlembicConfig
+
+        alembic_cfg = AlembicConfig("alembic.ini")
+        alembic_command.upgrade(alembic_cfg, "head")
+        logger.info("✅ Alembic 数据库迁移完成（已升级至最新版本）")
+    except Exception as e:
+        logger.warning(f"⚠️ Alembic 迁移跳过（回退到 create_all）: {e}")
+        # 回退方案：仍使用 create_all 确保表存在
         from src.models.database import create_tables
 
         create_tables()
         logger.info("✅ SQLite 数据库初始化完成（messages / sessions / escalations 表）")
-    except Exception as e:
-        logger.error(f"❌ SQLite 初始化失败: {e}")
 
     # 预初始化 LLM 客户端（验证配置）
     from src.core.llm_client import get_llm_client
@@ -62,6 +73,11 @@ async def lifespan(app: FastAPI):
         logger.info("✅ LLM 客户端初始化成功")
     except Exception as e:
         logger.error(f"❌ LLM 客户端初始化失败: {e}")
+
+    # ===== P0-1 修复: 初始化统一的 Redis 客户端 =====
+    from src.services.redis_client import redis_client
+
+    await redis_client.initialize()
 
     # P2-Root-Cause-Sweep: 综合安全门禁 — 检查所有敏感凭证
     _app_env = os.getenv("APP_ENV", "development").lower()
@@ -121,15 +137,22 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(_prewarm_rag())
 
-    # P0-Root-Cause-Sweep: 启动死单巡检看门狗（后台任务，每 15 分钟自动回收超时订单）
-    from src.services.task_coordinator import start_stale_order_watchdog
+    # 启动死单巡检和重试队列后台任务 (Watchdog + DLQ)
+    watchdog_task = asyncio.create_task(start_stale_order_watchdog())
+    retry_worker_task = asyncio.create_task(retry_queue.start_retry_worker())
 
-    asyncio.create_task(start_stale_order_watchdog())
+    logger.info("🚀 PDD Bot 后端服务已启动！")
 
     yield  # 应用运行中
 
     # === 关闭阶段 ===
     logger.info("👋 PDD AI 客服机器人正在关闭...")
+
+    # 优雅关闭后台任务
+    watchdog_task.cancel()
+    retry_worker_task.cancel()
+    retry_queue.stop()
+    logger.info("✅ 后台任务已停止")
 
     # P0-Root-Cause-Sweep: 优雅关闭持久化 HTTP 连接池
     import contextlib
@@ -143,6 +166,12 @@ async def lifespan(app: FastAPI):
     with contextlib.suppress(Exception):
         await wecom_client.close()
         logger.info("✅ 企业微信客户端连接池已关闭")
+
+    # ===== P0-1 修复: 关闭 Redis 连接池 =====
+    from src.services.redis_client import redis_client
+
+    with contextlib.suppress(Exception):
+        await redis_client.close()
 
 
 # 创建 FastAPI 应用
@@ -174,19 +203,24 @@ app.mount("/files", StaticFiles(directory="data/output"), name="generated_files"
 # ===== Prometheus 监控埋点 =====
 Instrumentator().instrument(app).expose(app)
 
-# ===== P0-Fix-3: 基于 TTLCache 的内存限流器 =====
+# ===== P0-Fix-3: 内存限流器兜底 (无 Redis 时使用) =====
 # 每个 IP 的访问计数在 60s 后自动淘汰，无需手动清理
 _rate_limit_store: TTLCache = TTLCache(maxsize=10000, ttl=60)
 
 
 @app.middleware("http")
 async def request_context_middleware(request: Request, call_next):
-    """注入 Request-ID 到日志上下文"""
-    request_id = str(uuid.uuid4())[:8]
-    with logger.contextualize(request_id=f"REQ-{request_id}"):
+    """注入 Trace-ID 到日志上下文 (L1: 使用 contextvars 全链路透传)"""
+    from src.utils.logger import generate_trace_id, trace_id_var
+
+    tid = generate_trace_id()
+    token = trace_id_var.set(tid)
+    try:
         response = await call_next(request)
-        response.headers["X-Request-ID"] = request_id
+        response.headers["X-Trace-ID"] = tid
         return response
+    finally:
+        trace_id_var.reset(token)
 
 
 @app.middleware("http")
@@ -195,14 +229,28 @@ async def rate_limit_middleware(request: Request, call_next):
     if request.url.path.startswith("/api/v1/chat"):
         client_ip = request.client.host if request.client else "unknown"
 
-        # P0-Fix-3: 基于 TTLCache 的滑动窗口限流，每分钟 60 次
-        current_count = _rate_limit_store.get(client_ip, 0)
-        if current_count >= 60:
+        # P0-Fix-3: 优先使用 Redis 限流，支持多进程状态一致
+        from src.services.redis_client import redis_client
+
+        if redis_client.is_available:
+            redis_key = f"rate_limit:ip:{client_ip}"
+            try:
+                current_count = await redis_client.client.incr(redis_key)
+                if current_count == 1:
+                    await redis_client.client.expire(redis_key, 60)
+            except Exception as e:
+                logger.warning(f"Redis 限流器异常，降级到内存模式: {e}")
+                current_count = _rate_limit_store.get(client_ip, 0) + 1
+                _rate_limit_store[client_ip] = current_count
+        else:
+            current_count = _rate_limit_store.get(client_ip, 0) + 1
+            _rate_limit_store[client_ip] = current_count
+
+        if current_count > 60:
             logger.warning(f"触发限流 | IP: {client_ip} | 请求已被拦截")
             return JSONResponse(
                 status_code=429, content={"status": "error", "message": "请求过于频繁，请稍后再试 (Too Many Requests)"}
             )
-        _rate_limit_store[client_ip] = current_count + 1
 
     response = await call_next(request)
     return response

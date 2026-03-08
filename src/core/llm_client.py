@@ -187,6 +187,25 @@ class LLMClient:
         max_tokens: int = 1024,
     ) -> str:
         """
+        发送对话请求并返回 AI 回复文本（含全局超时保护）。
+        """
+        try:
+            # P0-3 修复: 增加全局总超时保护 (45秒)，避免单次请求永久挂起
+            return await asyncio.wait_for(
+                self._execute_chat(messages, system_prompt, temperature, max_tokens), timeout=45.0
+            )
+        except asyncio.TimeoutError as e:
+            logger.error("LLM 调用全局超时 (45s)，已强制中断")
+            raise RuntimeError("LLM 调用全局超时 (45s)") from e
+
+    async def _execute_chat(
+        self,
+        messages: list[dict],
+        system_prompt: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+    ) -> str:
+        """
         发送对话请求并返回 AI 回复文本。
 
         P1-Root-Cause-Sweep: 新增 Token 安全截断，防止 payload 超出模型上下文导致 API 报错。
@@ -216,6 +235,14 @@ class LLMClient:
 
         for p_idx, provider in enumerate(self._providers_pool):
             p_name = provider["name"]
+
+            # P0-3 修复: 检查厂商是否处于熔断状态
+            circuit_open_until = provider.get("circuit_open_until", 0)
+            if time.time() < circuit_open_until:
+                remain = int(circuit_open_until - time.time())
+                logger.warning(f"厂商 [{p_name}] 处于熔断断开状态 (剩余 {remain}s)，跳过尝试")
+                continue
+
             p_config = PROVIDERS[p_name]
             # 每个厂商最多重试的次数 (配置指定的重试次数 or 该厂商的 Key 数量)
             max_attempts = max(settings.max_retries, len(provider["keys"]))
@@ -253,6 +280,10 @@ class LLMClient:
 
                     elapsed_ms = int((time.monotonic() - t_start) * 1000)
                     reply = response.choices[0].message.content
+
+                    # 成功后重置该厂商的连续失败次数
+                    provider["consecutive_failures"] = 0
+
                     logger.info(
                         f"LLM 成功 ({'Failover兜底' if p_idx > 0 else '默认'}) | 厂商: {p_name} | "
                         f"模型: {p_config['model']} | 耗时: {elapsed_ms}ms"
@@ -266,6 +297,15 @@ class LLMClient:
                 except Exception as e:
                     last_error = e
                     logger.warning(f"LLM 调用失败 | 厂商: {p_name} | Key: ...{api_key[-8:]} | {type(e).__name__}: {e}")
+
+                    # P0-3 修复: 累加连续失败次数，触发熔断
+                    failures = provider.get("consecutive_failures", 0) + 1
+                    provider["consecutive_failures"] = failures
+
+                    if failures >= 5:
+                        logger.error(f"🚨 厂商 [{p_name}] 连续失败 {failures} 次，触发熔断隔离 60 秒！")
+                        provider["circuit_open_until"] = time.time() + 60
+                        break  # 跳出当前厂商的重试循环，直接降级到下一个厂商
 
         # 如果所有 provider 循环都结束且没有返回
         raise RuntimeError(f"致命错误：LLM 调用在所有可用后端厂商的重试后全部失败。最后一个错误: {last_error}")

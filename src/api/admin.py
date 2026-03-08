@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -126,6 +126,109 @@ async def delete_knowledge(doc_id: str):
         raise HTTPException(status_code=500, detail="删除知识失败,可能ID不存在")
 
 
+@router.post("/api/admin/knowledge/import", summary="批量导入知识 (CSV/TXT)")
+async def import_knowledge(file: UploadFile = File(...)):
+    """
+    批量导入知识库数据，支持两种格式：
+
+    **CSV 格式**（推荐）：
+    - 自动检测 question/answer 或 q/a 列名
+    - 每行生成一条 QA 对写入 RAG 知识库
+
+    **TXT 格式**：
+    - 以空行分割段落，每个非空段落作为一条知识片段
+    - 如果没有空行分隔，则逐行导入（跳过空行）
+
+    安全限制：
+    - 单次最大 5MB
+    - 最多 500 条
+    """
+    # 文件大小限制 5MB
+    MAX_SIZE = 5 * 1024 * 1024
+    content_bytes = await file.read()
+    if len(content_bytes) > MAX_SIZE:
+        raise HTTPException(status_code=413, detail="文件过大，单次限制 5MB")
+
+    filename = (file.filename or "unknown").lower()
+    content_text = content_bytes.decode("utf-8-sig")  # 兼容 BOM
+
+    rag_engine = get_rag_engine()
+    imported = 0
+    errors = []
+    MAX_ITEMS = 500
+
+    if filename.endswith(".csv"):
+        import csv
+        import io
+
+        reader = csv.DictReader(io.StringIO(content_text))
+        fieldnames = [f.lower().strip() for f in (reader.fieldnames or [])]
+
+        # 自动检测列名
+        q_col = next((f for f in fieldnames if f in ("question", "q", "问题")), None)
+        a_col = next((f for f in fieldnames if f in ("answer", "a", "答案", "回答")), None)
+        content_col = next((f for f in fieldnames if f in ("content", "内容", "知识")), None)
+
+        for i, row in enumerate(reader):
+            if imported >= MAX_ITEMS:
+                errors.append(f"已达上限 {MAX_ITEMS} 条，后续行被忽略")
+                break
+            try:
+                # 将 row 的 key 统一为小写
+                row_lower = {k.lower().strip(): v for k, v in row.items()}
+
+                if q_col and a_col:
+                    q = row_lower.get(q_col, "").strip()
+                    a = row_lower.get(a_col, "").strip()
+                    if q and a:
+                        doc_content = f"问：{q}\n答：{a}"
+                        rag_engine.add_document(content=doc_content, metadata={"source": "csv_import"})
+                        imported += 1
+                elif content_col:
+                    c = row_lower.get(content_col, "").strip()
+                    if c:
+                        rag_engine.add_document(content=c, metadata={"source": "csv_import"})
+                        imported += 1
+                else:
+                    # 尝试拼接所有非空值
+                    values = [v.strip() for v in row.values() if v and v.strip()]
+                    if values:
+                        rag_engine.add_document(content=" | ".join(values), metadata={"source": "csv_import"})
+                        imported += 1
+            except Exception as e:
+                errors.append(f"行 {i + 2}: {e}")
+
+    elif filename.endswith(".txt"):
+        # 段落分割：用连续空行分段
+        paragraphs = content_text.split("\n\n")
+        if len(paragraphs) <= 1:
+            # 没有空行分隔，逐行导入
+            paragraphs = content_text.split("\n")
+
+        for i, para in enumerate(paragraphs):
+            if imported >= MAX_ITEMS:
+                errors.append(f"已达上限 {MAX_ITEMS} 条，后续段落被忽略")
+                break
+            text = para.strip()
+            if not text or len(text) < 5:  # 过短的行跳过
+                continue
+            try:
+                rag_engine.add_document(content=text, metadata={"source": "txt_import"})
+                imported += 1
+            except Exception as e:
+                errors.append(f"段落 {i + 1}: {e}")
+    else:
+        raise HTTPException(status_code=422, detail="不支持的文件格式，仅支持 .csv 和 .txt")
+
+    logger.info(f"知识库批量导入完成 | 文件: {file.filename} | 导入: {imported} 条 | 错误: {len(errors)} 条")
+    return {
+        "status": "success",
+        "imported": imported,
+        "errors": errors[:10],  # 最多返回10条错误信息
+        "msg": f"成功导入 {imported} 条知识" + (f"，{len(errors)} 条失败" if errors else ""),
+    }
+
+
 # ===== 统计接口 =====
 
 
@@ -173,12 +276,12 @@ async def toggle_ai_pause(
     """
     if body.paused is None:
         # 自动切换
-        current_state = session_manager.is_ai_paused(user_id, db=db)
+        current_state = await session_manager.is_ai_paused_async_safe(user_id, db=db)
         new_state = not current_state
     else:
         new_state = body.paused
 
-    session_manager.set_ai_paused(user_id, new_state, db=db)
+    await session_manager.set_ai_paused_async_safe(user_id, new_state, db=db)
     action = "paused" if new_state else "resumed"
     logger.info(f"AI 暂停状态已更新 | user_id: {user_id} | 新状态: {action}")
 
@@ -228,15 +331,21 @@ async def send_manual_message(
     except Exception as e:
         logger.warning(f"人工消息 PDD 推送失败（已记录到 DB）| user_id: {user_id} | {e}")
 
-    # 2. 写入 SQLite，标记 platform=manual 区分 AI 自动回复
+    # 2. 写入 SQLite，标记 platform=manual 区分 AI 自动回复 (使用线程池防阻塞)
+    from src.models.database import run_in_db_thread
+
     try:
-        save_message_and_upsert_session(
-            db,
-            user_id=user_id,
-            role="assistant",
-            content=f"[{body.operator_name}] {body.content}",
-            platform="manual",
-        )
+
+        def _save_manual():
+            save_message_and_upsert_session(
+                db,
+                user_id=user_id,
+                role="assistant",
+                content=f"[{body.operator_name}] {body.content}",
+                platform="manual",
+            )
+
+        await run_in_db_thread(_save_manual)
     except Exception as e:
         logger.error(f"人工消息写入 DB 失败 | {e}")
 
@@ -316,7 +425,7 @@ def claim_escalation(
 
 
 @router.post("/api/admin/escalations/{escalation_id}/resolve", summary="完结：标记升级已处理")
-def resolve_escalation(
+async def resolve_escalation(
     escalation_id: int,
     body: ResolveRequest,
     db: Session = Depends(get_db),
@@ -326,12 +435,17 @@ def resolve_escalation(
     可从 pending 或 claimed 状态流转。
     会话状态同步恢复为 active，并自动恢复 AI 自动回复。
     """
-    esc = db_service.resolve_escalation(db, escalation_id=escalation_id, operator_note=body.operator_note)
+    from src.models.database import run_in_db_thread
+
+    def _resolve():
+        return db_service.resolve_escalation(db, escalation_id=escalation_id, operator_note=body.operator_note)
+
+    esc = await run_in_db_thread(_resolve)
     if not esc:
         raise HTTPException(status_code=404, detail="升级记录不存在或已完结")
 
     # 恢复 AI 自动回复
-    session_manager.set_ai_paused(esc.user_id, False, db=db)
+    await session_manager.set_ai_paused_async_safe(esc.user_id, False, db=db)
 
     logger.info(f"升级已处理 | id: {escalation_id} | note: {body.operator_note}")
 
