@@ -38,3 +38,10 @@ repos:
       # 防止直接提交到 main 分支（强制走 PR 流程）
       - id: no-commit-to-branch
         args: [--branch, main]
+
+  # ── L1 企业化: GitLeaks 密钥扫描 ────────────────────────
+  # 自动检测提交中是否包含 API Key、密码、Token 等敏感信息
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks

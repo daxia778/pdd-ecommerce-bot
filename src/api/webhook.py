@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from config.settings import settings
 from src.api.websocket_manager import manager
+from src.core.content_guardrail import check_ai_output
 from src.core.escalation_detector import analyze as analyze_escalation
 from src.core.llm_client import get_llm_client
 from src.core.rag_engine import get_rag_engine
@@ -32,6 +33,7 @@ from src.services import db_service
 from src.services.pdd_api_client import pdd_api_client
 from src.services.task_coordinator import task_coordinator
 from src.utils.logger import logger
+from src.utils.prompt_loader import prompt_loader
 
 router = APIRouter()
 
@@ -43,69 +45,8 @@ _webhook_nonce_cache = TTLCache(maxsize=5000, ttl=300)
 WEBHOOK_TIMESTAMP_TOLERANCE = 300  # 签名时间戳容差: 5分钟
 
 # ===== PPT 设计店铺精细化 System Prompt =====
-BASE_SYSTEM_PROMPT = """你现在是拼多多「PPT金牌定制中心」的资深首席设计顾问，代号"小设"。
-你的目标是：以极高的情商和专业度，在解答疑问的同时，最大化转化客户下单。
-
-## 🏛 核心人格设定
-- **性格**：热情开朗、极度细心、像老朋友一样周到。
-- **专业度**：精通各类PPT风格（商业计划书、学术汇报、政务报告、颁奖庆典、个人简介、单页海报）。
-- **口吻**：典型的拼多多温婉客服风。必用"亲"，多用"哦哦""哒""哒哒""呀"等语气词。
-
-## 🛠 服务流程指导（引导转化核心）
-1. **破冰**：亲，在的呢！很高兴为您服务呀 😊
-2. **需求挖掘**：亲亲，为了给您更精准的建议，小设想请教下：
-   - PPT的主要用途（比如：汇报/路演/演讲/单页展示）？
-   - 大概有多少页内容需要排版呀？（1页也可以做哦！）
-   - 您的理想交付日期是哪天呢？
-3. **价值引导**：我们的设计老师都是3年以上经验，不仅是美化，更会帮您理逻辑哦。
-
-## 📊 订单类型智能识别（非常重要！）
-你需要准确判断客户需求的规模：
-
-### 小单（1-3页）— 常见场景：
-- "帮我做一页PPT" / "只要一张" / "做个封面" / "做个目录页"
-- "帮我改一下这页" / "美化一下" / "排版一下"
-- "做个单页海报" / "做个展示页"
-→ 小单也是正式订单！pages 字段填实际页数（如1、2、3），不要因为页数少就不触发订单。
-
-### 标准单（4-30页）— 常见场景：
-- "做个汇报PPT" / "年终总结" / "商业计划书" / "毕业答辩"
-→ 正常引导三要素后触发。
-
-### 大单（30+页）— 常见场景：
-- "做个完整的培训课件" / "全套方案" / "100页"
-→ 重点确认内容大纲和交付时间。
-
-## ⚖️ 法律规避与红线
-- **绝不承诺**："全网最低价"、"100%原创"、"第一、最、绝对"等词。
-- **版权声明**：设计中使用的图片素材如有版权争议，请及时告知更换。
-- **隐私保护**：绝不主动打听客户的联系电话、微信、家庭住址。
-
-## 🤖 自动下单指令（核心流程 — 必须严格遵守！）
-当客户明确了需求并表达了制作意愿时，在回复最后**新起一行**输出（不要向客户展示或解释这个指令）：
-[[CREATE_ORDER:{{"topic":"主题内容","pages":页数,"style":"商务/学术/简约/党建/可爱","details":"客户的其他具体要求","urgency":"normal/urgent/very_urgent","order_type":"single_page/standard/large"}}]]
-
-### 字段说明：
-- **topic**: 主题/内容描述（必填）
-- **pages**: 准确页数，1页也写1（必填）
-- **style**: 风格偏好（必填，没说就根据主题推断）
-- **details**: 其他具体要求（选填）
-- **urgency**: normal=正常 / urgent=加急 / very_urgent=非常着急
-- **order_type**: single_page=1-3页小单 / standard=标准单 / large=大单
-
-### 触发时机：
-- 客户说"就做1页"/"帮我做个PPT" + 主题明确 → 立即触发（不必三要素全齐，页数可默认）
-- 客户说"好的开始吧"/"可以做了" → 立即触发
-- 信息不够时温柔反问，但**不要过度追问**，2-3个要素就够了
-
-### 触发后话术：
-亲，已为您安排设计师啦！接下来需要您配合一个小步骤哦 👇
-请您发送一下您的**微信二维码**给我，我们的设计师会通过微信跟您对接后续细节，这样沟通更方便呢 😊
-我们会按照订单顺序处理，30分钟内注意查看微信好友申请哦~
-
-## 📝 知识库注入（以下是根据您问题检索到的专业回答）
-{rag_context}
-"""
+# 已通过 L2 企业化迁移至 data/prompts/ppt_consultant.yaml 热重载配置中
+# 使用 prompt_loader 获取
 
 
 # ===== 请求/响应数据模型 =====
@@ -205,7 +146,10 @@ async def _process_chat(
     # P0-1 修复：改用异步 retrieve_async 将运算卸载到线程池
     retrieved_docs = await rag.retrieve_async(query=message, top_k=3)
     rag_context = rag.build_context(retrieved_docs)
-    system_prompt = BASE_SYSTEM_PROMPT.format(
+
+    # L2: 动态加载 Prompt
+    prompt_cfg = prompt_loader.get("ppt_consultant")
+    system_prompt = prompt_cfg["base_system_prompt"].format(
         rag_context=rag_context if rag_context else "（知识库暂未入库，请凭经验回答）"
     )
 
@@ -227,38 +171,9 @@ async def _process_chat(
     )
 
     # === 预处理：Slot Filling 检查（检测 PPT 生成核心要素）===
-    # 扩展关键词：覆盖小单/改稿/单页等场景
-    ppt_keywords = [
-        "PPT",
-        "ppt",
-        "做个",
-        "帮我写",
-        "幻灯片",
-        "排版",
-        "美化",
-        "做一页",
-        "单页",
-        "一张",
-        "封面",
-        "改一下",
-        "海报",
-        "汇报",
-        "答辩",
-        "路演",
-        "总结",
-        "计划书",
-        "课件",
-    ]
+    ppt_keywords = prompt_cfg.get("ppt_keywords", ["PPT"])
     if any(k in message for k in ppt_keywords) and "[[CREATE_ORDER" not in message:
-        system_prompt += (
-            "\n\n【重要流程：需求确认】\n"
-            "客户似乎有PPT相关需求。请确认至少以下两个要素：\n"
-            "1. 主题/内容 (Topic) — 必须明确\n"
-            "2. 页数 (Pages) — 如客户只说'做一页'则 pages=1\n"
-            "3. 风格 (Style) — 可选，如未提及可根据主题智能推断\n"
-            "\n小单(1-3页)无需过度追问，主题明确即可触发。"
-            "\n标准单需确认主题+页数+风格后触发。"
-        )
+        system_prompt += "\n\n" + prompt_cfg.get("slot_filling_hint", "")
 
     _llm_start = time.monotonic()
     try:
@@ -317,10 +232,21 @@ async def _process_chat(
         except Exception as e:
             logger.error(f"解析订单指令失败: {e}")
 
-    # === 升级检测 + 入库 ===
-    escalation_result = await analyze_escalation(message, reply)
-    escalated = escalation_result["should_escalate"]
-    reason = escalation_result["reason"]
+    # === L2: 内容安全门网 (Guardrail) 拦截 ===
+    guardrail_result = check_ai_output(reply)
+    if guardrail_result.blocked:
+        # 被拦截，使用安全替换词
+        reply = guardrail_result.safe_reply
+        # 主动触发升级拦截
+        escalation_result = {"should_escalate": True, "reason": "guardrail_blocked", "reason_label": "安全红线拦截"}
+        escalated = True
+        reason = escalation_result["reason"]
+        logger.warning(f"Guardrail 拦截 | 用户: {user_id} | 触发规则: {guardrail_result.triggered_rules}")
+    else:
+        # === 升级检测 ===
+        escalation_result = await analyze_escalation(message, reply)
+        escalated = escalation_result["should_escalate"]
+        reason = escalation_result["reason"]
 
     if escalated:
         try:
@@ -473,13 +399,19 @@ async def _process_pdd_webhook_background(req: PddWebhookRequest):
 
         logger.info(f"PDD Webhook 回复 (后台) | buyer_id: {req.buyer_id} | 升级: {result['escalated']}")
 
-        # Phase 4: 异步调用 PDD 开放平台 API 将 reply 发送给买家
-        send_ok = await pdd_api_client.send_customer_message(
-            mall_id=req.shop_id, buyer_id=req.buyer_id, content=result["reply"]
-        )
+        # Phase 4 & L2: 异步调用 PDD 开放平台 API
+        # 如果失败，抛入重试死信队列
+        from src.services.message_retry_queue import retry_queue
 
-        if not send_ok:
-            logger.warning(f"向买家 {req.buyer_id} 发送 PDD 消息失败，可能由于暂未配置正确的 API Key，已降级或丢弃。")
+        try:
+            send_ok = await pdd_api_client.send_customer_message(
+                mall_id=req.shop_id, buyer_id=req.buyer_id, content=result["reply"]
+            )
+            if not send_ok:
+                raise RuntimeError("pdd_api_client returned False")
+        except Exception as e:
+            logger.warning(f"向买家发送 PDD 消息失败，推入重试队列 | buyer_id: {req.buyer_id} | error: {e}")
+            await retry_queue.enqueue(mall_id=req.shop_id, buyer_id=req.buyer_id, content=result["reply"])
 
         # 触发前端看板实时更新
         await manager.broadcast({"event": "update", "user_id": req.buyer_id})
@@ -594,9 +526,11 @@ async def upload_wechat_qr(
 
     # P0-Root-Cause-Sweep: 将同步 DB 写操作卸载到线程池
     def _update_order(db_session: DBSession):
+        from src.core.order_state_machine import transition_order
+        from src.models.enums import OrderStatus
+
         order.wechat_qr_image_path = qr_path
-        order.status = "req_fixed"
-        db_session.commit()
+        transition_order(order, OrderStatus.REQ_FIXED, db=db_session)
 
     await run_in_db_thread(_update_order, db)
 

@@ -118,7 +118,7 @@ async def client():
 async def auth_client():
     """登录后携带 Bearer Token 的客户端"""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        res = await ac.post("/api/v1/login", json={"username": "admin", "password": "pddbot2026"})
+        res = await ac.post("/api/v1/login", json={"username": "admin", "password": "admin888"})
         assert res.status_code == 200, f"登录失败: {res.text}"
         token = res.json()["access_token"]
         ac.headers.update({"Authorization": f"Bearer {token}"})
@@ -154,7 +154,7 @@ class TestHealth:
 
 class TestAuth:
     async def test_login_success(self, client):
-        res = await client.post("/api/v1/login", json={"username": "admin", "password": "pddbot2026"})
+        res = await client.post("/api/v1/login", json={"username": "admin", "password": "admin888"})
         assert res.status_code == 200
         data = res.json()
         assert "access_token" in data
@@ -165,7 +165,7 @@ class TestAuth:
         assert res.status_code == 401
 
     async def test_login_wrong_username(self, client):
-        res = await client.post("/api/v1/login", json={"username": "hacker", "password": "pddbot2026"})
+        res = await client.post("/api/v1/login", json={"username": "hacker", "password": "admin888"})
         assert res.status_code == 401
 
 
