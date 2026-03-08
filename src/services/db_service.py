@@ -72,7 +72,8 @@ def save_message_and_upsert_session(
         )
         db.add(session)
     else:
-        session.message_count += 1
+        # P0-SEC: 使用 DB 原子自增操作，避免并发下 Lost Update（多个请求读到相同旧值只+1）
+        session.message_count = SessionModel.message_count + 1
         session.updated_at = datetime.now()
 
     db.commit()
