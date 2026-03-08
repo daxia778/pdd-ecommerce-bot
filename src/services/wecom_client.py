@@ -32,6 +32,16 @@ class WeComClient:
         self._access_token: str | None = None
         self._token_expires_at: float = 0
 
+        # P0-Root-Cause-Sweep: 持久化 HTTP 连接池
+        self._client = httpx.AsyncClient(
+            limits=httpx.Limits(max_connections=50, max_keepalive_connections=10),
+            timeout=httpx.Timeout(10.0, connect=5.0),
+        )
+
+    async def close(self):
+        """关闭持久化 HTTP 连接池（由 FastAPI lifespan shutdown 调用）"""
+        await self._client.aclose()
+
     @property
     def is_configured(self) -> bool:
         """检查企业微信是否已配置凭证"""
@@ -47,12 +57,11 @@ class WeComClient:
         if not self.is_configured:
             raise RuntimeError("企业微信未配置 WECOM_CORP_ID / WECOM_CORP_SECRET")
 
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{self.base_url}/gettoken",
-                params={"corpid": self.corp_id, "corpsecret": self.corp_secret},
-            )
-            data = resp.json()
+        resp = await self._client.get(
+            f"{self.base_url}/gettoken",
+            params={"corpid": self.corp_id, "corpsecret": self.corp_secret},
+        )
+        data = resp.json()
 
         if data.get("errcode", 0) != 0:
             raise RuntimeError(f"获取企业微信 token 失败: {data}")
@@ -83,12 +92,11 @@ class WeComClient:
             "text": {"content": content},
         }
 
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{self.base_url}/message/send?access_token={token}",
-                json=payload,
-            )
-            data = resp.json()
+        resp = await self._client.post(
+            f"{self.base_url}/message/send?access_token={token}",
+            json=payload,
+        )
+        data = resp.json()
 
         if data.get("errcode", 0) != 0:
             logger.error(f"企业微信消息发送失败: {data}")
@@ -122,12 +130,11 @@ class WeComClient:
             "userlist": member_ids,
         }
 
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{self.base_url}/appchat/create?access_token={token}",
-                json=payload,
-            )
-            data = resp.json()
+        resp = await self._client.post(
+            f"{self.base_url}/appchat/create?access_token={token}",
+            json=payload,
+        )
+        data = resp.json()
 
         if data.get("errcode", 0) != 0:
             logger.error(f"企业微信创建群聊失败: {data}")
@@ -153,12 +160,11 @@ class WeComClient:
             "text": {"content": content},
         }
 
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{self.base_url}/appchat/send?access_token={token}",
-                json=payload,
-            )
-            data = resp.json()
+        resp = await self._client.post(
+            f"{self.base_url}/appchat/send?access_token={token}",
+            json=payload,
+        )
+        data = resp.json()
 
         if data.get("errcode", 0) != 0:
             logger.error(f"企业微信群消息发送失败: {data}")

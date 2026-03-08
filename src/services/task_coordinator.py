@@ -136,6 +136,90 @@ def run_production_pipeline_sync(order_sn: str):
     asyncio.run(_async_run_production_pipeline(order_sn))
 
 
+# ===== P0-Root-Cause-Sweep: 死单自动巡检与回收 =====
+
+# 超过此时间仍处于 GENERATING/PROCESSING 状态的订单将被回收
+STALE_ORDER_TIMEOUT_MINUTES: int = 30
+# 巡检间隔
+WATCHDOG_INTERVAL_SECONDS: int = 900  # 15 分钟
+
+
+def recover_stale_orders() -> int:
+    """
+    扫描并回收超时的"死单"。
+
+    当进程被强杀或 Redis/Playwright 崩溃时，订单可能永久卡在
+    GENERATING 或 PROCESSING 状态。此函数将这些订单回退为 FAILED，
+    并记录错误信息以便运营人员排查。
+
+    Returns: 回收的订单数量
+    """
+    from datetime import timedelta
+
+    db = SessionLocal()
+    recovered_count = 0
+    try:
+        cutoff = datetime.now() - timedelta(minutes=STALE_ORDER_TIMEOUT_MINUTES)
+        stale_orders = (
+            db.query(Order)
+            .filter(
+                Order.status.in_([OrderStatus.GENERATING, OrderStatus.PROCESSING]),
+                Order.updated_at < cutoff,
+            )
+            .all()
+        )
+
+        for order in stale_orders:
+            order.status = OrderStatus.FAILED
+            order.error_message = (
+                f"[Watchdog] 订单在 {order.status} 状态超过 {STALE_ORDER_TIMEOUT_MINUTES} 分钟，"
+                f"已被自动回收。可能原因：进程被强杀、Playwright 超时或网络异常。"
+            )
+            recovered_count += 1
+            logger.warning(
+                f"Watchdog | 🔄 回收死单 | order_sn: {order.order_sn} | "
+                f"原状态: {order.status} | updated_at: {order.updated_at}"
+            )
+
+        if recovered_count > 0:
+            db.commit()
+            logger.info(f"Watchdog | ✅ 本轮巡检完成，回收了 {recovered_count} 个死单")
+        else:
+            logger.debug("Watchdog | 本轮巡检完成，无死单需要回收")
+
+    except Exception as e:
+        logger.error(f"Watchdog | ❌ 死单巡检异常: {e}", exc_info=True)
+        db.rollback()
+    finally:
+        db.close()
+
+    return recovered_count
+
+
+async def start_stale_order_watchdog():
+    """
+    启动死单巡检后台任务。
+
+    由 FastAPI lifespan 启动阶段调用，通过 asyncio.create_task 运行。
+    每 15 分钟执行一次 recover_stale_orders()，在独立线程中执行避免阻塞事件循环。
+    """
+    from src.models.database import run_in_db_thread
+
+    logger.info(
+        f"Watchdog | 🐕 死单巡检已启动 | 间隔: {WATCHDOG_INTERVAL_SECONDS}s | 超时阈值: {STALE_ORDER_TIMEOUT_MINUTES}min"
+    )
+
+    # 启动时立即执行一次
+    await run_in_db_thread(recover_stale_orders)
+
+    while True:
+        await asyncio.sleep(WATCHDOG_INTERVAL_SECONDS)
+        try:
+            await run_in_db_thread(recover_stale_orders)
+        except Exception as e:
+            logger.error(f"Watchdog | 后台巡检异常: {e}")
+
+
 # ===== 任务协调器 =====
 
 

@@ -419,13 +419,17 @@ async def pdd_webhook(
 
     # --- 情况 A: 人工客服回复的消息（自动触发学习模式） ---
     if req.type == "seller_message":
-        # 获取该买家最近的一条提问
-        history = session_manager.get_history(req.buyer_id, db=db)
+        # P0-Root-Cause-Sweep: 使用异步安全方法，避免同步 DB I/O 阻塞事件循环
+        history = await session_manager.get_history_async_safe(req.buyer_id, db=db)
         last_user_msg = next((m["content"] for m in reversed(history) if m["role"] == "user"), None)
 
         if last_user_msg:
-            # 执行强化学习：将 [用户问题 + 人工回复] 存入 RAG 向量库
-            rag.add_qa_pair(question=last_user_msg, answer=req.content)
+            # P0-Root-Cause-Sweep: 使用异步版本将 Embedding 计算卸载到线程池
+            qa_content = f"问：{last_user_msg}\n答：{req.content}"
+            await rag.add_document_async(
+                content=qa_content,
+                metadata={"source": "human_sync", "question": last_user_msg[:100]},
+            )
             logger.info(f"🔥 双轨制学习：同步一条人工话术 | 问: {last_user_msg[:20]}... | 答: {req.content[:20]}...")
             await manager.broadcast({"event": "update", "user_id": req.buyer_id})
             return {"status": "learned", "msg": "人工经验已同步"}

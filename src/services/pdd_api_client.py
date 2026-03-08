@@ -1,3 +1,11 @@
+"""
+拼多多开放平台 API 客户端
+封装签名生成和网络请求逻辑。
+
+P0-Root-Cause-Sweep: 使用持久化 httpx.AsyncClient 连接池，
+避免每次请求都创建 / 销毁 TCP 连接导致的端口耗尽和握手延迟。
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -16,6 +24,8 @@ class PddApiClient:
     """
     拼多多开放平台 API 客户端
     封装签名生成和网络请求逻辑。
+
+    P0-Root-Cause-Sweep: 使用持久化连接池替代每次请求新建 AsyncClient。
     """
 
     def __init__(self):
@@ -24,6 +34,18 @@ class PddApiClient:
         self.client_secret = settings.pdd_app_secret
         self.access_token = settings.pdd_access_token
         self.max_retries = 3
+
+        # P0-Root-Cause-Sweep: 持久化 HTTP 连接池
+        # limits: 最大 100 连接, 单 host 最多 20 连接
+        # timeout: 连接 5s, 读 10s, 写 5s, 连接池获取 5s
+        self._client = httpx.AsyncClient(
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+            timeout=httpx.Timeout(10.0, connect=5.0),
+        )
+
+    async def close(self):
+        """关闭持久化 HTTP 连接池（由 FastAPI lifespan shutdown 调用）"""
+        await self._client.aclose()
 
     def _generate_sign(self, params: dict[str, Any]) -> str:
         """
@@ -36,8 +58,6 @@ class PddApiClient:
 
         for k in sorted_keys:
             v = params[k]
-            # 这里拼多多要求布尔类型转字符串或不加入特定结构，具体依官方最新文档为准
-            # 标准做法是将 value 转为字符串
             if isinstance(v, dict | list):
                 sign_str += f"{k}{json.dumps(v, separators=(',', ':'))}"
             else:
@@ -53,17 +73,15 @@ class PddApiClient:
         """
         if not self.client_id or not self.client_secret or not self.access_token:
             logger.warning("PDD API 凭证未配置，无法发送真实消息（已降级为仅日志模式）")
-            # 在测试环境或未配置凭证下模拟成功
             return True
 
         params = {
-            "type": "pdd.pop.cs.message.send",  # 示例 API 名称，具体参阅 PDD 开放平台文档
+            "type": "pdd.pop.cs.message.send",
             "client_id": self.client_id,
             "access_token": self.access_token,
             "timestamp": str(int(time.time())),
             "data_type": "JSON",
             "version": "V1",
-            # 业务参数
             "mall_id": mall_id,
             "buyer_id": buyer_id,
             "message_type": "text",
@@ -79,20 +97,16 @@ class PddApiClient:
                     logger.warning(f"PDD API | 准备重试发送消息，等待 {delay}s...")
                     await asyncio.sleep(delay)
 
-                async with httpx.AsyncClient() as client:
-                    logger.info(
-                        f"PDD API | 正在发送消息至买家 {buyer_id[:8]}... (尝试 {attempt + 1}/{self.max_retries})"
-                    )
-                    response = await client.post(self.gateway_url, json=params, timeout=10.0)
+                logger.info(f"PDD API | 正在发送消息至买家 {buyer_id[:8]}... (尝试 {attempt + 1}/{self.max_retries})")
+                response = await self._client.post(self.gateway_url, json=params)
 
-                    resp_data = response.json()
-                    # 检查拼多多返回的错误包体，这里假设包含 error_response 字段为失败
-                    if "error_response" in resp_data:
-                        logger.error(f"PDD API 错误返回: {resp_data['error_response']}")
-                        return False  # 业务错误通常不重试
+                resp_data = response.json()
+                if "error_response" in resp_data:
+                    logger.error(f"PDD API 错误返回: {resp_data['error_response']}")
+                    return False
 
-                    logger.info("PDD API | 消息发送成功")
-                    return True
+                logger.info("PDD API | 消息发送成功")
+                return True
 
             except Exception as e:
                 logger.error(f"PDD API | 请求异常(尝试 {attempt + 1}/{self.max_retries}): {e}")
@@ -130,19 +144,18 @@ class PddApiClient:
                     logger.warning(f"PDD API | 准备重试发送文件，等待 {delay}s...")
                     await asyncio.sleep(delay)
 
-                async with httpx.AsyncClient() as client:
-                    logger.info(
-                        f"PDD API | 正在发送文件消息至买家 {buyer_id[:8]}... (尝试 {attempt + 1}/{self.max_retries})"
-                    )
-                    response = await client.post(self.gateway_url, json=params, timeout=10.0)
+                logger.info(
+                    f"PDD API | 正在发送文件消息至买家 {buyer_id[:8]}... (尝试 {attempt + 1}/{self.max_retries})"
+                )
+                response = await self._client.post(self.gateway_url, json=params)
 
-                    resp_data = response.json()
-                    if "error_response" in resp_data:
-                        logger.error(f"PDD API 文件消息错误返回: {resp_data['error_response']}")
-                        return False
+                resp_data = response.json()
+                if "error_response" in resp_data:
+                    logger.error(f"PDD API 文件消息错误返回: {resp_data['error_response']}")
+                    return False
 
-                    logger.info("PDD API | 文件消息发送成功")
-                    return True
+                logger.info("PDD API | 文件消息发送成功")
+                return True
 
             except Exception as e:
                 logger.error(f"PDD API | 文件请求异常(尝试 {attempt + 1}/{self.max_retries}): {e}")

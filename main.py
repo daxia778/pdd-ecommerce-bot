@@ -95,10 +95,28 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(_prewarm_rag())
 
+    # P0-Root-Cause-Sweep: 启动死单巡检看门狗（后台任务，每 15 分钟自动回收超时订单）
+    from src.services.task_coordinator import start_stale_order_watchdog
+
+    asyncio.create_task(start_stale_order_watchdog())
+
     yield  # 应用运行中
 
     # === 关闭阶段 ===
     logger.info("👋 PDD AI 客服机器人正在关闭...")
+
+    # P0-Root-Cause-Sweep: 优雅关闭持久化 HTTP 连接池
+    import contextlib
+
+    from src.services.pdd_api_client import pdd_api_client
+    from src.services.wecom_client import wecom_client
+
+    with contextlib.suppress(Exception):
+        await pdd_api_client.close()
+        logger.info("✅ PDD API 客户端连接池已关闭")
+    with contextlib.suppress(Exception):
+        await wecom_client.close()
+        logger.info("✅ 企业微信客户端连接池已关闭")
 
 
 # 创建 FastAPI 应用
