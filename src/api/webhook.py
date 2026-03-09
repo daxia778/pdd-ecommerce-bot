@@ -12,9 +12,12 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import hmac
+import ipaddress
 import json
 import re
+import socket
 import time
+from urllib.parse import urlparse
 
 from cachetools import TTLCache
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
@@ -36,6 +39,7 @@ from src.services.task_coordinator import task_coordinator
 from src.utils.background_task_wrapper import catch_background_exceptions
 from src.utils.logger import logger
 from src.utils.prompt_loader import prompt_loader
+from src.utils.safe_task import create_safe_task
 
 router = APIRouter()
 
@@ -489,6 +493,47 @@ async def health(db: DBSession = Depends(get_db)):
 
 # ===== 微信二维码接收端点 =====
 
+# P0-SEC: SSRF 防护 - 图片下载域名白名单
+_ALLOWED_IMAGE_HOST_PATTERNS = [
+    r".*\.pinduoduo\.com$",
+    r".*\.pddpic\.com$",
+    r".*\.weixin\.qq\.com$",
+    r"^mmbiz\.qpic\.cn$",
+    r".*\.myqcloud\.com$",
+    r".*\.wechat\.com$",
+]
+
+
+def _validate_image_url(url: str) -> None:
+    """
+    P0-SEC: 校验图片 URL，防止 SSRF 攻击。
+    1. 仅允许 http/https 协议
+    2. 解析目标 IP，拒绝私有/回环/链路本地地址
+    3. 校验 Host 是否在允许的 CDN 白名单中
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="仅支持 HTTP/HTTPS 协议的图片地址")
+
+    host = parsed.hostname
+    if not host:
+        raise HTTPException(status_code=400, detail="无效的图片 URL")
+
+    # 拒绝私有 / 回环 / 链路本地 IP
+    try:
+        resolved_ip = socket.gethostbyname(host)
+        addr = ipaddress.ip_address(resolved_ip)
+        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+            logger.warning(f"P0-SEC SSRF 拦截 | url={url} | resolved_ip={resolved_ip}")
+            raise HTTPException(status_code=403, detail="禁止访问内部网络地址")
+    except socket.gaierror:
+        raise HTTPException(status_code=400, detail=f"无法解析域名: {host}") from None
+
+    # 白名单校验
+    if not any(re.match(pattern, host) for pattern in _ALLOWED_IMAGE_HOST_PATTERNS):
+        logger.warning(f"P0-SEC SSRF 域名拦截 | host={host} | url={url}")
+        raise HTTPException(status_code=403, detail=f"域名 {host} 不在允许的图片来源白名单中")
+
 
 @router.post("/wechat_qr", summary="接收顾客微信二维码图片")
 async def upload_wechat_qr(
@@ -534,6 +579,8 @@ async def upload_wechat_qr(
     qr_path = os.path.join(qr_dir, qr_filename)
 
     try:
+        # P0-SEC: SSRF 防护 — 校验 image_url 合法性
+        _validate_image_url(image_url)
         # P0-Root-Cause-Sweep: 使用共享连接池下载，不再每次新建 httpx client
         resp = await pdd_api_client._client.get(image_url)
         if resp.status_code == 200:
@@ -565,9 +612,8 @@ async def upload_wechat_qr(
 
         if wecom_client.is_configured:
             requirement = json.loads(order.requirement_json or "{}")
-            import asyncio
 
-            asyncio.create_task(
+            create_safe_task(
                 wecom_client.send_text_message(
                     user_ids=settings.wecom_default_notify_ids,
                     content=(
@@ -576,7 +622,8 @@ async def upload_wechat_qr(
                         f"主题: {requirement.get('topic', '?')}\n"
                         f"请尽快添加顾客微信！"
                     ),
-                )
+                ),
+                name="wecom-notify-qr-received",
             )
     except Exception:
         pass

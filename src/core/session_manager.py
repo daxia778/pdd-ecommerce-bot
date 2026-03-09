@@ -17,6 +17,7 @@ import json
 from config.settings import settings
 from src.services.redis_client import redis_client
 from src.utils.logger import logger
+from src.utils.safe_task import create_safe_task
 
 
 class SessionManager:
@@ -126,12 +127,12 @@ class SessionManager:
     # ------------------------------------------------------------------
 
     def clear_session(self, user_id: str) -> None:
-        """从 Redis 清空指定用户的缓存。如果是异步调用，应当考虑封装。这里为了兼容保留同步方法，采用 create_task。"""
+        """从 Redis 清空指定用户的缓存。P1-FIX: 使用 create_safe_task 防止 GC 回收。"""
         if redis_client.is_available:
             key = self._redis_key(user_id)
             try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(redis_client.delete(key))
+                asyncio.get_running_loop()  # 确认有 event loop
+                create_safe_task(redis_client.delete(key), name="clear-session")
             except RuntimeError:
                 # Event loop not running (e.g. tests)
                 pass

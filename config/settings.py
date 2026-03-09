@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     max_history_length: int = 10
     max_retries: int = 3
 
+    # ===== 超时配置 (秒) =====
+    # P1-FIX: 核心超时常量集中管理，通过 .env 可运维热更新
+    llm_chat_timeout: int = 45  # LLM 单次对话全局超时保护
+    pipeline_generate_timeout: int = 480  # PPT 生成步骤超时 (Playwright/NotebookLM)
+    pipeline_watermark_timeout: int = 120  # 去水印步骤超时
+
     # ===== RAG 配置 =====
     # P1-7: RAG 相关性阈值，低于此分数的知识片段不注入 Prompt（0.0 = 不过滤）
     rag_relevance_threshold: float = 0.3

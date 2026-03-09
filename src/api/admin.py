@@ -10,8 +10,6 @@ P1-5: list_escalations 支持 claimed 状态 Tab，返回 claimed_at / operator_
 
 from __future__ import annotations
 
-import asyncio
-
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -24,6 +22,7 @@ from src.models.database import get_db
 from src.services import db_service
 from src.utils.auth import create_access_token, verify_admin, verify_password
 from src.utils.logger import logger
+from src.utils.safe_task import create_safe_task
 
 # 依赖注入保护整个 router 的 API 接口（除 /login 外，由于要兼容现有代码，我们只在需要的端点加或独立一个 Auth router）
 # 为了兼容前端，我们先单独提供一个不需要 verify_admin 依赖的 login router
@@ -286,14 +285,15 @@ async def toggle_ai_pause(
     logger.info(f"AI 暂停状态已更新 | user_id: {user_id} | 新状态: {action}")
 
     # 广播 WebSocket 通知
-    asyncio.create_task(
+    create_safe_task(
         ws_manager.broadcast(
             {
                 "event": "ai_pause_toggled",
                 "user_id": user_id,
                 "is_paused": new_state,
             }
-        )
+        ),
+        name="ws-broadcast-pause",
     )
 
     return {"success": True, "user_id": user_id, "is_paused": new_state, "action": action}
@@ -352,7 +352,7 @@ async def send_manual_message(
     logger.info(f"人工消息已发送 | user_id: {user_id} | operator: {body.operator_name} | pdd_ok: {send_ok}")
 
     # 3. 广播 WebSocket 通知，前端立即刷新对话记录
-    asyncio.create_task(
+    create_safe_task(
         ws_manager.broadcast(
             {
                 "event": "manual_message_sent",
@@ -360,7 +360,8 @@ async def send_manual_message(
                 "content": body.content,
                 "operator_name": body.operator_name,
             }
-        )
+        ),
+        name="ws-broadcast-manual-msg",
     )
 
     return {
@@ -450,14 +451,15 @@ async def resolve_escalation(
     logger.info(f"升级已处理 | id: {escalation_id} | note: {body.operator_note}")
 
     # 广播 WebSocket 通知
-    asyncio.create_task(
+    create_safe_task(
         ws_manager.broadcast(
             {
                 "event": "escalation_resolved",
                 "escalation_id": escalation_id,
                 "user_id": esc.user_id,
             }
-        )
+        ),
+        name="ws-broadcast-escalation-resolved",
     )
 
     return {"success": True, "id": escalation_id, "status": "resolved"}

@@ -24,6 +24,7 @@ from src.models.database import Escalation, Message
 from src.models.database import Session as SessionModel
 from src.models.enums import SessionStatus
 from src.utils.logger import logger
+from src.utils.safe_task import create_safe_task
 
 # ===== 消息操作 =====
 
@@ -72,7 +73,8 @@ def save_message_and_upsert_session(
         )
         db.add(session)
     else:
-        session.message_count += 1
+        # P0-SEC: 使用 DB 原子自增操作，避免并发下 Lost Update（多个请求读到相同旧值只+1）
+        session.message_count = SessionModel.message_count + 1
         session.updated_at = datetime.now()
 
     db.commit()
@@ -157,8 +159,8 @@ def create_escalation(
     import asyncio
 
     try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(
+        asyncio.get_running_loop()  # 确认有 event loop
+        create_safe_task(
             ws_manager.broadcast(
                 {
                     "type": "new_escalation",
@@ -171,7 +173,8 @@ def create_escalation(
                         else esc.trigger_message,
                     },
                 }
-            )
+            ),
+            name="ws-broadcast-new-escalation",
         )
     except RuntimeError:
         # 无 running event loop（单元测试/同步 worker 场景），跳过广播

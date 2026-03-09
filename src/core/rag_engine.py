@@ -16,7 +16,7 @@ import asyncio
 import functools
 import os
 import time
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
@@ -32,13 +32,20 @@ RERANK_MODEL_NAME = "BAAI/bge-reranker-base"
 # P0-4: 修正集合名称，与业务一致
 COLLECTION_NAME = "pdd_shop_knowledge"
 
-# P0-FIX & P1-2: 支持 ProcessPoolExecutor 选项并加入线程池超时降级
-USE_PROCESS_POOL = os.getenv("RAG_USE_PROCESS_POOL", "false").lower() == "true"
-if USE_PROCESS_POOL:
-    # 注意: ProcessPool 需要依赖方法 picklable，可能对 chromadb_client 有局限，实验特性。
-    _model_executor = ProcessPoolExecutor(max_workers=2)
-else:
-    _model_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="rag-model")
+# P0-SEC: 强制使用 ThreadPoolExecutor
+# ProcessPoolExecutor 会导致 self(含 chromadb.PersistentClient -> sqlite3.Connection) pickle 崩溃
+# sentence-transformers 底层 C/C++ 已释放 GIL，多线程即可获得充分吞吐
+_USE_PROCESS_POOL_REQUESTED = os.getenv("RAG_USE_PROCESS_POOL", "false").lower() == "true"
+if _USE_PROCESS_POOL_REQUESTED:
+    import warnings
+
+    warnings.warn(
+        "RAG_USE_PROCESS_POOL=true 已弃用: chromadb 的 sqlite3.Connection 不可跨进程 pickle，"
+        "已自动降级为 ThreadPoolExecutor。请移除此环境变量。",
+        DeprecationWarning,
+        stacklevel=1,
+    )
+_model_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="rag-model")
 
 # 懒加载 - 避免启动时长时间等待
 _sentence_model = None
