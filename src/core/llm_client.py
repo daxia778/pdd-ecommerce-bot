@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import os
+import random
 import time
 
 import litellm
@@ -190,13 +191,14 @@ class LLMClient:
         发送对话请求并返回 AI 回复文本（含全局超时保护）。
         """
         try:
-            # P0-3 修复: 增加全局总超时保护 (45秒)，避免单次请求永久挂起
+            # P1-FIX: 超时常量从 settings 统一管理
             return await asyncio.wait_for(
-                self._execute_chat(messages, system_prompt, temperature, max_tokens), timeout=45.0
+                self._execute_chat(messages, system_prompt, temperature, max_tokens),
+                timeout=settings.llm_chat_timeout,
             )
         except asyncio.TimeoutError as e:
-            logger.error("LLM 调用全局超时 (45s)，已强制中断")
-            raise RuntimeError("LLM 调用全局超时 (45s)") from e
+            logger.error(f"LLM 调用全局超时 ({settings.llm_chat_timeout}s)，已强制中断")
+            raise RuntimeError(f"LLM 调用全局超时 ({settings.llm_chat_timeout}s)") from e
 
     async def _execute_chat(
         self,
@@ -254,7 +256,9 @@ class LLMClient:
                     break  # 跳出内层循环，直接进入下一个 provider
 
                 if attempt > 0:
-                    delay = _RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                    # P1-FIX: 加入随机抖动 (Jitter)，防止多请求集中失败后同时重试踩踏 API
+                    jitter = random.uniform(0.5, 1.5)
+                    delay = _RETRY_BASE_DELAY * (2 ** (attempt - 1)) * jitter
                     delay = min(delay, 16.0)
                     logger.warning(
                         f"LLM 退避等待 {delay:.1f}s 后重试 | 厂商 {p_name} | 尝试 {attempt + 1}/{max_attempts}"
