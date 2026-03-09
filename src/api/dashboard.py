@@ -47,7 +47,8 @@ async def websocket_endpoint(
         if not username:
             raise jwt.InvalidTokenError("No sub claim")
     except jwt.PyJWTError as e:
-        await websocket.close(code=1008, reason=f"Invalid token: {e}")
+        logger.warning(f"WebSocket 鉴权失败 | token 解析异常: {type(e).__name__}: {e}")
+        await websocket.close(code=1008, reason="Invalid or expired token")
         return
 
     await manager.connect(websocket)

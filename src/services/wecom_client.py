@@ -93,7 +93,8 @@ class WeComClient:
         }
 
         resp = await self._client.post(
-            f"{self.base_url}/message/send?access_token={token}",
+            f"{self.base_url}/message/send",
+            params={"access_token": token},
             json=payload,
         )
         data = resp.json()
@@ -131,7 +132,8 @@ class WeComClient:
         }
 
         resp = await self._client.post(
-            f"{self.base_url}/appchat/create?access_token={token}",
+            f"{self.base_url}/appchat/create",
+            params={"access_token": token},
             json=payload,
         )
         data = resp.json()
@@ -161,7 +163,8 @@ class WeComClient:
         }
 
         resp = await self._client.post(
-            f"{self.base_url}/appchat/send?access_token={token}",
+            f"{self.base_url}/appchat/send",
+            params={"access_token": token},
             json=payload,
         )
         data = resp.json()

@@ -7,6 +7,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from config.settings import settings
+from src.utils.logger import logger
 
 security = HTTPBasic(auto_error=False)
 
@@ -19,7 +20,11 @@ JWT_EXPIRATION_MINUTES = 60 * 24  # 1天
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """验证明文密码是否匹配存储的哈希地址"""
     if ":" not in hashed_password:
-        # 向后兼容：如果还未设置哈希，退回到明文比较（不推荐）
+        # P2-FIX: 向后兼容但加日志警告，提醒升级到哈希密码
+        logger.warning(
+            "⚠️ verify_password 退化为明文比较 — 请在 .env 中配置 ADMIN_PASSWORD_HASH "
+            "(格式: sha256:<salt>:<hex_digest>) 替代明文 ADMIN_PASSWORD"
+        )
         return secrets.compare_digest(plain_password, hashed_password)
 
     try:
