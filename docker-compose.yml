@@ -1,9 +1,32 @@
 # ============================================================
 #   Docker Compose — PDD AI 智能客服完整运行环境
 #   一键启动: docker compose up -d
+#   企业级加固: PostgreSQL 15 替代 SQLite
 # ============================================================
 
 services:
+  # ── PostgreSQL 15 主数据库 ──────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: pdd-bot-postgres
+    restart: unless-stopped
+    ports:
+      - "${PG_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: pdd_ecommerce
+      POSTGRES_USER: pdd_bot
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-pdd_bot_secure_2024}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pdd_bot -d pdd_ecommerce"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - pdd-net
+
   # ── 后端 API 服务 ────────────────────────────────────────
   backend:
     build:
@@ -16,11 +39,10 @@ services:
     env_file:
       - .env
     environment:
-      - DB_URL=sqlite:///./data/sqlite/pdd_ecommerce.db
+      - DB_URL=postgresql://pdd_bot:${PG_PASSWORD:-pdd_bot_secure_2024}@postgres:5432/pdd_ecommerce
       - CHROMA_DB_DIR=./data/chroma
     volumes:
-      # 持久化数据：SQLite、ChromaDB、生成文件、日志
-      - ./data/sqlite:/app/data/sqlite
+      # 持久化数据：ChromaDB、生成文件、日志
       - ./data/chroma:/app/data/chroma
       - ./data/output:/app/data/output
       - ./logs:/app/logs
@@ -30,6 +52,9 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - pdd-net
 
@@ -72,4 +97,5 @@ networks:
     driver: bridge
 
 volumes:
+  pg-data:
   redis-data:

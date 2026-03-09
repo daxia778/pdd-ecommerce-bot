@@ -83,13 +83,19 @@ class TestLLMClientChat:
 
     @pytest.mark.asyncio
     async def test_successful_chat(self, mock_client):
-        """正常调用应返回 AI 回复文本"""
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "测试回复"
-        mock_response.usage = MagicMock()
+        """正常调用应返回 AI 回复文本（流式模式）"""
 
-        with patch("src.core.llm_client.acompletion", new_callable=AsyncMock, return_value=mock_response):
+        # P4-Stream: mock 流式响应 — acompletion 返回 AsyncIterator[chunk]
+        async def mock_stream(*args, **kwargs):
+            """模拟流式 chunk 迭代器"""
+            for text in ["测试", "回复"]:
+                chunk = MagicMock()
+                chunk.choices = [MagicMock()]
+                chunk.choices[0].delta = MagicMock()
+                chunk.choices[0].delta.content = text
+                yield chunk
+
+        with patch("src.core.llm_client.acompletion", return_value=mock_stream()):
             reply = await mock_client.chat(
                 messages=[{"role": "user", "content": "你好"}],
             )
@@ -113,12 +119,16 @@ class TestLLMClientChat:
     @pytest.mark.asyncio
     async def test_system_prompt_prepended(self, mock_client):
         """system_prompt 应作为第一条消息插入"""
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "OK"
-        mock_response.usage = MagicMock()
 
-        with patch("src.core.llm_client.acompletion", new_callable=AsyncMock, return_value=mock_response) as mock_call:
+        # P4-Stream: mock 流式响应
+        async def mock_stream(*args, **kwargs):
+            chunk = MagicMock()
+            chunk.choices = [MagicMock()]
+            chunk.choices[0].delta = MagicMock()
+            chunk.choices[0].delta.content = "OK"
+            yield chunk
+
+        with patch("src.core.llm_client.acompletion", return_value=mock_stream()) as mock_call:
             await mock_client.chat(
                 messages=[{"role": "user", "content": "Hi"}],
                 system_prompt="你是客服",
