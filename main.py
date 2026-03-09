@@ -128,11 +128,14 @@ async def lifespan(app: FastAPI):
     async def _prewarm_rag():
         try:
             logger.info("⏳ 后台预热 RAG 模型...")
-            from src.core.rag_engine import get_rag_engine
+            from src.core.rag_engine import get_rag_engine, prewarm_models
 
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, get_rag_engine)  # 阻塞模型加载放线程池
-            logger.info("✅ RAG 模型预热完成，首次查询将立即响应")
+            # 1. 初始化 ChromaDB 集合
+            await loop.run_in_executor(None, get_rag_engine)
+            # 2. 真正加载 Embedding + Rerank 模型（这一步是关键，需要10-20秒）
+            await loop.run_in_executor(None, prewarm_models)
+            logger.info("✅ RAG 引擎 + 模型预热全部完成")
         except Exception as e:
             logger.warning(f"⚠️ RAG 模型预热失败（不影响服务启动）: {e}")
 

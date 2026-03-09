@@ -25,7 +25,7 @@ class SessionManager:
     基于 Redis 列表缓存的高可用 Session 管理器。
     """
 
-    def __init__(self, max_history: int = 10):
+    def __init__(self, max_history: int = 6):
         self._max_history = max_history
         logger.info(f"SessionManager(Redis版) 初始化 | 最大历史: {max_history}")
 

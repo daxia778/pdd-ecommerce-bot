@@ -242,12 +242,10 @@ async def search_messages(q: str = Query("", min_length=1), db: DBSession = Depe
 async def extract_requirements(user_id: str, db: DBSession = Depends(get_db)):
     """
     从指定用户的对话中提取结构化需求信息。
-    优先从 AI 生成的 [[CREATE_ORDER:...]] 标记中解析；
-    若无标记，则从买家消息中基于关键词启发式提取。
-    返回每个字段的置信度（0 = 未提取到，不展示置信度）。
+    智能提取：优先依靠 LLM 强大的 NLP 理解能力，代替之前的正则匹配；
+    如果失败，自动降级为正则表达式启发式提取。
     """
-    import json
-    import re
+    from src.services.requirement_extractor import extract_requirements_intelligently
 
     def _get_all_messages(db_session: DBSession):
         return db_session.query(Message).filter(Message.user_id == user_id).order_by(Message.created_at).all()
@@ -260,88 +258,8 @@ async def extract_requirements(user_id: str, db: DBSession = Depends(get_db)):
     buyer_content = " ".join(buyer_msgs)
     all_content = " ".join(all_msgs)
 
-    # 每个字段的结果和置信度（0 = 未检测到）
-    fields = ["topic", "pages", "style", "deadline", "budget", "audience", "outline", "assets"]
-    result = {k: "" for k in fields}
-    confidence = {k: 0 for k in fields}
-    result["source"] = "none"
-
-    # 1. 优先从 [[CREATE_ORDER:...]] 提取（高置信度）
-    order_match = re.search(r"\[\[CREATE_ORDER:(.*?)\]\]", all_content, re.DOTALL)
-    if order_match:
-        try:
-            raw = order_match.group(1).strip()
-            data = json.loads(raw)
-            field_map = {
-                "topic": "topic",
-                "pages": "pages",
-                "style": "style",
-                "deadline": "deadline",
-                "budget": "budget",
-                "audience": "audience",
-                "outline": "outline",
-                "assets": "assets",
-            }
-            for field, json_key in field_map.items():
-                val = (
-                    data.get(json_key, "") or data.get("details", "")
-                    if json_key == "outline"
-                    else data.get(json_key, "")
-                )
-                if val and str(val).strip():
-                    result[field] = str(val).strip()
-                    confidence[field] = 95 if field in ("topic", "pages") else 88
-            result["source"] = "order_token"
-            result["confidence"] = confidence
-            return result
-        except Exception:
-            pass
-
-    # 2. 启发式关键词提取 — 仅从买家消息中提取
-    # 页数（买家提到的）
-    pages_m = re.search(r"(\d+)\s*[页pP]", buyer_content)
-    if pages_m:
-        result["pages"] = f"{pages_m.group(1)}页"
-        confidence["pages"] = 90
-
-    # 主题：从买家消息中寻找"做/要/需要 + 名词短语"
-    topic_patterns = [
-        r"(?:做|要|需要|定制|制作)\s*([\u4e00-\u9fa5a-zA-Z]{2,15}(?:PPT|ppt|计划书|报告|方案|汇报|总结|答辩|展示|投标|培训|介绍|宣传))",
-        r"([\u4e00-\u9fa5]{2,8}(?:计划书|报告|方案|汇报|总结|答辩|投标|培训|宣传|介绍))",
-    ]
-    for pat in topic_patterns:
-        topic_m = re.search(pat, buyer_content)
-        if topic_m:
-            result["topic"] = topic_m.group(1).strip()
-            confidence["topic"] = 80
-            break
-
-    # 风格（从买家消息中）
-    style_keywords = ["商务", "学术", "简约", "科技", "高端", "创投", "正规", "现代", "简洁", "大气"]
-    for kw in style_keywords:
-        if kw in buyer_content:
-            result["style"] = kw
-            confidence["style"] = 75
-            break
-
-    # 时间（从买家消息中）
-    deadline_keywords = ["明天", "后天", "本周", "下周", "月底", "紧急", "加急", "尽快", "马上"]
-    for kw in deadline_keywords:
-        if kw in buyer_content:
-            result["deadline"] = kw
-            confidence["deadline"] = 82
-            break
-
-    # 预算（从买家消息中）
-    budget_m = re.search(r"(\d+)\s*[元块]", buyer_content)
-    if budget_m:
-        result["budget"] = f"{budget_m.group(1)}元"
-        confidence["budget"] = 78
-
-    if any(result[k] for k in fields):
-        result["source"] = "heuristic"
-
-    result["confidence"] = confidence
+    # 调用提取服务（优先 LLM，降级正则）
+    result = await extract_requirements_intelligently(buyer_content, all_content)
     return result
 
 
