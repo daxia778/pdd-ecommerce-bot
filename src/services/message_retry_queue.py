@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -70,7 +71,9 @@ class MessageRetryQueue:
         logger.info(f"📬 消息重试队列 | Worker 已启动 | 扫描间隔: {self._retry_interval}s")
 
         while self._running:
-            await asyncio.sleep(self._retry_interval)
+            # P1-FIX: 加入随机抖动 (Jitter)，防止惊群效应导致集中踩踏 PDD 开放接口
+            jitter = random.uniform(0.5, 1.5)
+            await asyncio.sleep(self._retry_interval * jitter)
             await self._process_retry_batch()
 
     async def _process_retry_batch(self):
