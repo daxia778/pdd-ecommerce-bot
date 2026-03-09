@@ -26,6 +26,7 @@ from src.api.webhook import router as webhook_router
 from src.services.message_retry_queue import retry_queue
 from src.services.task_coordinator import start_stale_order_watchdog
 from src.utils.logger import logger
+from src.utils.safe_task import create_safe_task
 
 
 @asynccontextmanager
@@ -135,11 +136,11 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️ RAG 模型预热失败（不影响服务启动）: {e}")
 
-    asyncio.create_task(_prewarm_rag())
+    create_safe_task(_prewarm_rag(), name="prewarm-rag")
 
     # 启动死单巡检和重试队列后台任务 (Watchdog + DLQ)
-    watchdog_task = asyncio.create_task(start_stale_order_watchdog())
-    retry_worker_task = asyncio.create_task(retry_queue.start_retry_worker())
+    watchdog_task = create_safe_task(start_stale_order_watchdog(), name="watchdog-stale-orders")
+    retry_worker_task = create_safe_task(retry_queue.start_retry_worker(), name="retry-worker")
 
     logger.info("🚀 PDD Bot 后端服务已启动！")
 
