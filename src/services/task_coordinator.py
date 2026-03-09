@@ -17,6 +17,7 @@ from src.core.order_state_machine import transition_order
 from src.models.database import Order, SessionLocal
 from src.models.enums import OrderStatus
 from src.utils.logger import logger
+from src.utils.safe_task import create_safe_task
 
 # ===== 懒加载 Redis/RQ（不在模块加载时执行，避免崩溃）=====
 
@@ -46,10 +47,9 @@ def _get_queue():
 # ===== 核心流水线逻辑 =====
 
 
-# P1-2: Playwright 任务全局超时（防止 NotebookLM 卡死导致 worker 永久挂起）
-# 分别为「生成PPT」和「去水印」两步配置独立超时，方便后续按需调整
-PIPELINE_GENERATE_TIMEOUT_S: int = 480  # 生成步骤最多 8 分钟
-PIPELINE_WATERMARK_TIMEOUT_S: int = 120  # 去水印最多 2 分钟
+# P1-FIX: 超时常量从 settings.py 统一管理
+PIPELINE_GENERATE_TIMEOUT_S: int = settings.pipeline_generate_timeout
+PIPELINE_WATERMARK_TIMEOUT_S: int = settings.pipeline_watermark_timeout
 
 
 async def _async_run_production_pipeline(order_sn: str):
@@ -260,12 +260,13 @@ class TaskCoordinator:
         try:
             from src.services.wecom_client import wecom_client
 
-            asyncio.create_task(
+            create_safe_task(
                 wecom_client.notify_new_order(
                     order_sn=order_sn,
                     user_id=user_id,
                     requirement=requirement,
-                )
+                ),
+                name="wecom-notify-new-order",
             )
         except Exception as e:
             logger.debug(f"企业微信通知跳过: {e}")
@@ -286,10 +287,10 @@ class TaskCoordinator:
                 logger.info(f"Pipeline | 已加入 RQ 队列 | Job ID: {job.id}")
             except Exception as e:
                 logger.warning(f"Pipeline | RQ 入队失败，降级到 asyncio | {e}")
-                asyncio.create_task(_async_run_production_pipeline(order_sn))
+                create_safe_task(_async_run_production_pipeline(order_sn), name="pipeline-fallback")
         else:
             # asyncio 本地模式
-            asyncio.create_task(_async_run_production_pipeline(order_sn))
+            create_safe_task(_async_run_production_pipeline(order_sn), name="pipeline-local")
             logger.info(f"Pipeline | asyncio 本地模式已启动 | 订单: {order_sn}")
 
 

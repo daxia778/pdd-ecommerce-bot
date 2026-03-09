@@ -39,6 +39,7 @@ from src.services.task_coordinator import task_coordinator
 from src.utils.background_task_wrapper import catch_background_exceptions
 from src.utils.logger import logger
 from src.utils.prompt_loader import prompt_loader
+from src.utils.safe_task import create_safe_task
 
 router = APIRouter()
 
@@ -611,9 +612,8 @@ async def upload_wechat_qr(
 
         if wecom_client.is_configured:
             requirement = json.loads(order.requirement_json or "{}")
-            import asyncio
 
-            asyncio.create_task(
+            create_safe_task(
                 wecom_client.send_text_message(
                     user_ids=settings.wecom_default_notify_ids,
                     content=(
@@ -622,7 +622,8 @@ async def upload_wechat_qr(
                         f"主题: {requirement.get('topic', '?')}\n"
                         f"请尽快添加顾客微信！"
                     ),
-                )
+                ),
+                name="wecom-notify-qr-received",
             )
     except Exception:
         pass
