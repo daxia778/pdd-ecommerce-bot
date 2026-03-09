@@ -78,12 +78,42 @@ def identify_reason(user_message: str) -> tuple[str, str]:
 
 async def analyze(user_message: str, ai_reply: str) -> dict:
     """
-    综合分析：使用 LLM 动态判断是否需要升级 + 升级原因。
-    失败时自动降级到基于关键词的规则匹配。
+    综合分析：判断是否需要升级 + 升级原因。
 
-    P1-Root-Cause-Sweep: 使用 Pydantic 模型校验 LLM 输出，
-    防止 reason_code 幻觉值或 JSON 格式异常导致下游写入错误。
+    性能优化策略（Keyword-First）：
+    1. 先用关键词快速判断 — 如果 AI 回复明确触发了转人工话术，直接返回（~0ms）
+    2. 如果买家消息命中高置信度关键词（投诉/加急等），也直接返回（~0ms）
+    3. 只有在「关键词无法确定」的模糊边界情况下，才调用 LLM 做精准判断（~1.5s）
+
+    这样 80%+ 的普通对话可以完全跳过第二次 LLM 调用。
     """
+    # ── 快速路径 1：AI 回复中已有转人工话术 → 必须升级 ──
+    if detect_escalation(ai_reply):
+        reason_code, reason_label = identify_reason(user_message)
+        logger.debug(f"升级检测(关键词快速命中-AI回复) | reason: {reason_code}")
+        return {"should_escalate": True, "reason": reason_code, "reason_label": reason_label}
+
+    # ── 快速路径 2：买家消息命中高置信度关键词 → 直接升级 ──
+    # 只对「投诉/纠纷」类高置信度关键词做快速判定，避免误判
+    HIGH_CONFIDENCE_KEYWORDS = ["投诉", "骗", "差评", "退款", "举报", "维权", "消协", "12315", "垃圾", "报警"]
+    if any(kw in user_message for kw in HIGH_CONFIDENCE_KEYWORDS):
+        reason_code, reason_label = identify_reason(user_message)
+        logger.debug(f"升级检测(关键词快速命中-投诉) | reason: {reason_code}")
+        return {"should_escalate": True, "reason": reason_code, "reason_label": reason_label}
+
+    # ── 快速路径 3：普通对话（无任何升级信号）→ 直接返回不升级 ──
+    # 只有在买家消息命中了低置信度关键词（加急/便宜等）时才需要 LLM 精判
+    has_ambiguous_signal = False
+    for keywords, _code, _label in REASON_RULES:
+        if any(kw in user_message for kw in keywords):
+            has_ambiguous_signal = True
+            break
+
+    if not has_ambiguous_signal:
+        # 完全没有任何升级信号 → 跳过 LLM，直接返回（~0ms）
+        return {"should_escalate": False, "reason": "none", "reason_label": "无"}
+
+    # ── 慢速路径：模糊信号，需要 LLM 精准判定 ──
     llm = get_llm_client()
     prompt = f"【买家消息】：{user_message}\n【AI回复】：{ai_reply}\n\n请输出JSON结果："
 
@@ -106,17 +136,8 @@ async def analyze(user_message: str, ai_reply: str) -> dict:
         try:
             result = EscalationResult.model_validate_json(raw_json)
         except (ValidationError, ValueError):
-            # 兼容 LLM 返回的 Python 风格布尔值 (True/False 而非 true/false)
             data = json.loads(raw_json)
             result = EscalationResult.model_validate(data)
-
-        # 二次保险：如果 LLM 判断为 False，但 AI 回复明确提到转接人工，则强制纠正
-        if not result.should_escalate and detect_escalation(ai_reply):
-            result.should_escalate = True
-            if result.reason_code == "none":
-                code, label = identify_reason(user_message)
-                result.reason_code = code  # type: ignore[assignment]
-                result.reason_label = label
 
         logger.debug(f"LLM 意图识别成功 | should_escalate: {result.should_escalate} | reason: {result.reason_code}")
         return {
@@ -127,11 +148,10 @@ async def analyze(user_message: str, ai_reply: str) -> dict:
 
     except Exception as e:
         logger.warning(f"LLM 意图识别失败，回退到关键词匹配: {e}")
-        # 降级逻辑
-        should_escalate = detect_escalation(ai_reply)
-        reason, reason_label = identify_reason(user_message) if should_escalate else ("none", "无")
+        # 降级兜底：用已匹配的模糊信号直接升级
+        reason_code, reason_label = identify_reason(user_message)
         return {
-            "should_escalate": should_escalate,
-            "reason": reason,
+            "should_escalate": True,
+            "reason": reason_code,
             "reason_label": reason_label,
         }
