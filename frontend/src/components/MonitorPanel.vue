@@ -54,30 +54,39 @@
                 : 'bg-white border-transparent hover:border-gray-200 hover:bg-gray-50 hover:shadow-sm hover:-translate-y-0.5'
             ]"
           >
-            <!-- 模拟器会话标签（最高优先级） -->
-            <span
-              v-if="session.platform === 'simulator'"
-              class="absolute top-2 right-2 text-[9px] font-bold bg-cyan-100 text-cyan-700 px-1.5 py-0.5 rounded-full ring-1 ring-cyan-200 flex items-center gap-0.5"
-            >🤖 模拟器</span>
+            <!-- 右上角标签组（竖排堆叠，避免重叠） -->
+            <div class="absolute top-1.5 right-1.5 flex flex-col items-end gap-1 z-10">
+              <!-- 模拟器标签（最高优先级） -->
+              <span
+                v-if="session.platform === 'simulator'"
+                class="text-[8px] font-bold bg-cyan-100 text-cyan-700 px-1.5 py-0.5 rounded-full ring-1 ring-cyan-200 flex items-center gap-0.5 leading-tight"
+              >🤖 模拟器</span>
 
-            <!-- AI 暂停状态标签 -->
-            <span
-              v-else-if="store.pausedSessions[session.user_id]"
-              class="absolute top-2 right-2 text-[9px] font-bold uppercase bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded-full"
-            >人工接管</span>
+              <!-- AI 暂停状态标签 -->
+              <span
+                v-else-if="store.pausedSessions[session.user_id]"
+                class="text-[8px] font-bold uppercase bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded-full leading-tight"
+              >人工接管</span>
 
-            <!-- 演示数据标签 -->
-            <span
-              v-else-if="session.is_demo"
-              class="absolute top-2 right-2 text-[9px] font-bold uppercase bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full ring-1 ring-purple-200"
-            >演示数据</span>
+              <!-- 演示数据标签 -->
+              <span
+                v-else-if="session.is_demo"
+                class="text-[8px] font-bold uppercase bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full leading-tight"
+              >演示数据</span>
 
-            <div class="flex items-center mb-1.5">
+              <!-- 平台标签（总是显示在状态标签下方） -->
+              <span
+                v-if="session.platform && session.platform !== 'simulator'"
+                class="text-[8px] uppercase font-bold px-1.5 py-0.5 rounded leading-tight"
+                :class="platformBadgeClass(session.platform)"
+              >{{ session.platform }}</span>
+            </div>
+
+            <div class="flex items-center mb-1.5 pr-16">
               <div :class="['w-7 h-7 rounded-lg flex items-center justify-center text-white font-black text-[10px] mr-2 shadow-sm shrink-0', getAvatarGradient(session.user_id)]">
                 {{ extractChineseName(formatUserId(session.user_id)) }}
               </div>
-              <span class="font-bold text-gray-700 truncate flex-1 text-sm mr-2">{{ formatUserId(session.user_id) }}</span>
-              <span v-if="session.platform" class="text-[9px] uppercase font-bold text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded shrink-0">{{ session.platform }}</span>
+              <span class="font-bold text-gray-700 truncate flex-1 text-sm">{{ formatUserId(session.user_id) }}</span>
             </div>
             <div class="flex justify-between items-center text-[11px] text-gray-500 font-medium">
               <span class="flex items-center">
@@ -535,6 +544,16 @@ const getAvatarGradient = (name) => {
     let hash = 0;
     for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
     return AVATAR_GRADIENTS[Math.abs(hash) % AVATAR_GRADIENTS.length];
+};
+
+const platformBadgeClass = (platform) => {
+    const map = {
+        pdd: 'bg-red-50 text-red-500',
+        wechat: 'bg-green-50 text-green-600',
+        taobao: 'bg-orange-50 text-orange-500',
+        simulator: 'bg-cyan-50 text-cyan-600',
+    };
+    return map[(platform || '').toLowerCase()] || 'bg-gray-100 text-gray-400';
 };
 
 const formatUserId = (id) => {

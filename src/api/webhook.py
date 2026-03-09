@@ -318,6 +318,89 @@ async def chat(req: ChatRequest, db: DBSession = Depends(get_db)):
     return ChatResponse(user_id=req.user_id, **result)
 
 
+@router.get("/extract_requirements/{user_id}", summary="提取买家对话中的结构化需求 (无需鉴权)")
+async def extract_requirements_public(user_id: str, db: DBSession = Depends(get_db)):
+    """
+    从指定用户的对话中提取结构化需求信息。
+    供买家模拟器直接调用（无需 JWT），逻辑与 dashboard 版一致。
+    """
+    from src.models.database import Message, run_in_db_thread
+
+    def _get_all_messages(db_session: DBSession):
+        return db_session.query(Message).filter(Message.user_id == user_id).order_by(Message.created_at).all()
+
+    messages = await run_in_db_thread(_get_all_messages, db)
+
+    buyer_msgs = [m.content for m in messages if m.role == "user"]
+    all_msgs = [m.content for m in messages]
+    buyer_content = " ".join(buyer_msgs)
+    all_content = " ".join(all_msgs)
+
+    fields = ["topic", "pages", "style", "deadline", "budget", "audience", "outline", "assets"]
+    result = {k: "" for k in fields}
+    confidence = {k: 0 for k in fields}
+    result["source"] = "none"
+
+    # 1. 优先从 [[CREATE_ORDER:...]] 提取
+    order_match = re.search(r"\[\[CREATE_ORDER:(.*?)\]\]", all_content, re.DOTALL)
+    if order_match:
+        try:
+            raw = order_match.group(1).strip()
+            data = json.loads(raw)
+            for field in fields:
+                val = data.get(field, "") or (data.get("details", "") if field == "outline" else "")
+                if val and str(val).strip():
+                    result[field] = str(val).strip()
+                    confidence[field] = 95 if field in ("topic", "pages") else 88
+            result["source"] = "order_token"
+            result["confidence"] = confidence
+            return result
+        except Exception:
+            pass
+
+    # 2. 启发式关键词提取 — 仅从买家消息中提取
+    pages_m = re.search(r"(\d+)\s*[页pP]", buyer_content)
+    if pages_m:
+        result["pages"] = f"{pages_m.group(1)}页"
+        confidence["pages"] = 90
+
+    topic_patterns = [
+        r"(?:做|要|需要|定制|制作)\s*([\u4e00-\u9fa5a-zA-Z]{2,15}(?:PPT|ppt|计划书|报告|方案|汇报|总结|答辩|展示|投标|培训|介绍|宣传))",
+        r"([\u4e00-\u9fa5]{2,8}(?:计划书|报告|方案|汇报|总结|答辩|投标|培训|宣传|介绍))",
+    ]
+    for pat in topic_patterns:
+        topic_m = re.search(pat, buyer_content)
+        if topic_m:
+            result["topic"] = topic_m.group(1).strip()
+            confidence["topic"] = 80
+            break
+
+    style_keywords = ["商务", "学术", "简约", "科技", "高端", "创投", "正规", "现代", "简洁", "大气"]
+    for kw in style_keywords:
+        if kw in buyer_content:
+            result["style"] = kw
+            confidence["style"] = 75
+            break
+
+    deadline_keywords = ["明天", "后天", "本周", "下周", "月底", "紧急", "加急", "尽快", "马上"]
+    for kw in deadline_keywords:
+        if kw in buyer_content:
+            result["deadline"] = kw
+            confidence["deadline"] = 82
+            break
+
+    budget_m = re.search(r"(\d+)\s*[元块]", buyer_content)
+    if budget_m:
+        result["budget"] = f"{budget_m.group(1)}元"
+        confidence["budget"] = 78
+
+    if any(result[k] for k in fields):
+        result["source"] = "heuristic"
+
+    result["confidence"] = confidence
+    return result
+
+
 @router.post("/webhook/pdd", summary="PDD Webhook 消息接收 (含双轨制学习)")
 async def pdd_webhook(
     request: Request,
