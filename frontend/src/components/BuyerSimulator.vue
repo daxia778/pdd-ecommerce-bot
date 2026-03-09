@@ -244,8 +244,10 @@ const scrollToBottom = () => {
 
 const clearChat = () => {
     messages.value = [];
-    localReqData.topic = '';
-    localReqData.pages = '';
+    // 重置所有需求字段
+    Object.keys(localReqData).forEach(k => { localReqData[k] = ''; });
+    // 清空置信度
+    Object.keys(fieldConfidence).forEach(k => { delete fieldConfidence[k]; });
 
     fetch('/api/v1/chat', {
         method: 'POST',
@@ -366,14 +368,21 @@ const completionRate = computed(() => {
 const triggerExtraction = async (silent = false) => {
     if (!silent) isExtracting.value = true;
     try {
-        const data = await store.extractRequirements(buyerId.value);
+        // 直接调用公开的提取 API（无需 JWT），绕过 dashboard 鉴权
+        const res = await fetch(`/api/v1/extract_requirements/${buyerId.value}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
         if (data && data.source !== 'none') {
-            Object.keys(localReqData).forEach(k => {
+            // 更新需求数据
+            const fields = ['topic', 'pages', 'style', 'deadline', 'budget', 'audience', 'outline'];
+            fields.forEach(k => {
                 if (data[k]) localReqData[k] = data[k];
             });
+            // 更新置信度
             if (data.confidence) {
-                Object.keys(fieldConfidence).forEach(k => {
-                    fieldConfidence[k] = data.confidence[k] || 0;
+                fields.forEach(k => {
+                    if (data.confidence[k]) fieldConfidence[k] = data.confidence[k];
                 });
             }
         }
