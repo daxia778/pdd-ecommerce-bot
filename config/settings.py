@@ -3,9 +3,16 @@
 
 P1-7 增强: 新增 rag_relevance_threshold 配置项（RAG 相关性阈值）
 P0-3 修复: 补充 deepseek_key_list / gemini_key_list 解析 property
+Enterprise: PostgreSQL 升级 + 启动密钥校验
 """
 
+import logging
+import warnings
+
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_startup_logger = logging.getLogger("pdd_bot.settings")
 
 
 class Settings(BaseSettings):
@@ -46,8 +53,9 @@ class Settings(BaseSettings):
     # Webhook HMAC 签名密钥（空 = 跳过签名校验）
     pdd_webhook_secret: str = ""
 
-    # ===== 数据库 =====
-    db_url: str = "sqlite:///./data/sqlite/pdd_ecommerce.db"
+    # ===== 数据库 (Enterprise: PostgreSQL 15) =====
+    # Docker 环境自动覆盖; 本地开发可在 .env 中指定 sqlite:///./data/sqlite/pdd_ecommerce.db
+    db_url: str = "postgresql://pdd_bot:pdd_bot_secure_2024@localhost:5432/pdd_ecommerce"
     chroma_db_dir: str = "./data/chroma"
 
     # ===== Redis / Queue =====
@@ -111,6 +119,21 @@ class Settings(BaseSettings):
     @property
     def has_gemini_keys(self) -> bool:
         return len(self.gemini_key_list) > 0
+
+    # ===== Enterprise: 启动时校验关键密钥 =====
+    @model_validator(mode="after")
+    def _warn_missing_secrets(self):
+        """启动时检测缺失的重要安全配置，打印明确的 WARNING 而非静默运行。"""
+        checks = {
+            "JWT_SECRET_KEY": self.jwt_secret_key,
+            "ADMIN_PASSWORD": self.admin_password,
+        }
+        for name, val in checks.items():
+            if not val or val.startswith("your_") or val == "placeholder":
+                msg = f"⚠️  关键安全配置 [{name}] 未设置或使用占位符，请在 .env 中配置真实值！"
+                _startup_logger.warning(msg)
+                warnings.warn(msg, stacklevel=2)
+        return self
 
 
 # 全局单例

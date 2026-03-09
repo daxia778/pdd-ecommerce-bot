@@ -1,6 +1,7 @@
 # ============================================================
 #   CI 流水线 — Pull Request 自动质量检查
 #   触发条件: 向 main 分支提交 PR 或直接 push
+#   Enterprise Hardening: 严格模式，阻断不合规代码
 # ============================================================
 name: CI
 
@@ -9,6 +10,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+
+# 取消重复运行（同一 PR 的多次 push 只保留最新）
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # ── 后端: Python 代码质量检查 ─────────────────────────────
@@ -40,11 +46,27 @@ jobs:
         run: mypy src/ config/ --ignore-missing-imports
         continue-on-error: true  # 渐进式引入，暂不阻断 PR
 
-  # ── 后端: 测试（跑 3.9，安装完整依赖）─────────────────────
+  # ── 后端: 测试（Python 3.9，安装完整依赖）────────────────
   backend-test:
     name: "🧪 Backend Test"
     runs-on: ubuntu-latest
     needs: backend-lint  # Lint 通过后才跑测试
+
+    # Enterprise: 使用 PostgreSQL Service Container 进行真实 DB 测试
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: pdd_test
+          POSTGRES_USER: pdd_bot
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - uses: actions/checkout@v4
@@ -67,7 +89,7 @@ jobs:
           pip install -r requirements.txt
           pip install pytest pytest-asyncio httpx pytest-cov
 
-      - name: Run Tests with Coverage
+      - name: Run Tests with Coverage (SQLite - fast)
         run: |
           python -m pytest tests/test_core.py tests/test_llm_client.py \
             -v --tb=short \
@@ -79,7 +101,18 @@ jobs:
           DB_URL: "sqlite:///:memory:"
           ZHIPU_API_KEYS: "test-key-for-ci"
           LLM_PROVIDER: "zhipu"
-          ADMIN_PASSWORD: "admin888"
+          ADMIN_PASSWORD: "ci-test-password-not-for-production"
+          JWT_SECRET_KEY: "ci-test-secret-key-not-for-production"
+
+      - name: Run Tests (PostgreSQL - integration)
+        run: |
+          python -m pytest tests/test_core.py \
+            -v --tb=short
+        env:
+          DB_URL: "postgresql://pdd_bot:test_password@localhost:5432/pdd_test"
+          ZHIPU_API_KEYS: "test-key-for-ci"
+          LLM_PROVIDER: "zhipu"
+          ADMIN_PASSWORD: "ci-test-password-not-for-production"
           JWT_SECRET_KEY: "ci-test-secret-key-not-for-production"
 
       - name: Run Integration Tests (test_api.py)
@@ -88,7 +121,7 @@ jobs:
           DB_URL: "sqlite:///:memory:"
           ZHIPU_API_KEYS: "test-key-for-ci"
           LLM_PROVIDER: "zhipu"
-          ADMIN_PASSWORD: "admin888"
+          ADMIN_PASSWORD: "ci-test-password-not-for-production"
           JWT_SECRET_KEY: "ci-test-secret-key-not-for-production"
         continue-on-error: true
 
@@ -99,6 +132,22 @@ jobs:
           name: coverage-report
           path: coverage_html/
           retention-days: 7
+
+  # ── 安全扫描: 密钥泄露检测 ────────────────────────────────
+  security-scan:
+    name: "🔒 Security Scan"
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 全量历史，深度扫描
+
+      - name: Gitleaks (密钥泄露扫描)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true  # 渐进式引入
 
   # ── 前端: Vue 3 构建检查 ─────────────────────────────────
   frontend:
