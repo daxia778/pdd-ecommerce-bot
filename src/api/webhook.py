@@ -168,7 +168,11 @@ async def _process_chat(
     await session_manager.add_message_async_safe(user_id, "user", message, db=db, platform=platform)
 
     # === P0-Fix-2: 从内存/DB 获取历史（异步安全读取）===
-    history = await session_manager.get_history_async_safe(user_id, db=db)
+    full_history = await session_manager.get_history_async_safe(user_id, db=db)
+
+    # 性能优化：限制发送给 LLM 的历史轮数（仅保留最近 8 条），减少 Token 消耗加快响应
+    MAX_HISTORY_FOR_LLM = 8
+    history = full_history[-MAX_HISTORY_FOR_LLM:] if len(full_history) > MAX_HISTORY_FOR_LLM else full_history
 
     # P2: Vision API 支持
     if image_url and history and history[-1]["role"] == "user":
@@ -188,7 +192,7 @@ async def _process_chat(
 
     _llm_start = time.monotonic()
     try:
-        reply = await llm.chat(messages=history, system_prompt=system_prompt)
+        reply = await llm.chat(messages=history, system_prompt=system_prompt, max_tokens=500)
         response_time_ms = int((time.monotonic() - _llm_start) * 1000)
         with contextlib.suppress(Exception):
             if redis_client.is_available:
