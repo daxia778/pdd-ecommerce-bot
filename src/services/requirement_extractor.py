@@ -83,12 +83,12 @@ JSON必须包含以下结构：
             # If the token didn't extract it well, or it's empty, we let LLM fill it
             if val and val not in ("-", "无"):
                 # Always trust LLM over basic token for tricky fields like deadline or outline
-                should_override = not result[field] or field in ("deadline", "outline") 
-                
+                should_override = not result[field] or field in ("deadline", "outline")
+
                 # Filter out leaked AI service strings explicitly
                 if field == "outline" and any(bad in val for bad in ("一般制作", "高级定制", "简单排版", "尊享版")):
                     continue
-                    
+
                 if should_override:
                     result[field] = val
                     confidence[field] = 85
@@ -153,4 +153,3 @@ def extract_requirements_heuristically(buyer_content, result, confidence):
 
     result["confidence"] = confidence
     return result
-

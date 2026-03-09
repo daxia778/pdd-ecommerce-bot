@@ -563,11 +563,13 @@ async def get_system_health(db: DBSession = Depends(get_db)):
     def _is_real_value(v):
         return bool(v) and not str(v).startswith("your_") and v != "placeholder"
 
-    pdd_configured = all([
-        _is_real_value(pdd_api_client.client_id),
-        _is_real_value(pdd_api_client.client_secret),
-        _is_real_value(pdd_api_client.access_token),
-    ])
+    pdd_configured = all(
+        [
+            _is_real_value(pdd_api_client.client_id),
+            _is_real_value(pdd_api_client.client_secret),
+            _is_real_value(pdd_api_client.access_token),
+        ]
+    )
     components.append(
         {
             "name": "PDD 开放平台",
@@ -779,7 +781,7 @@ async def get_component_config(key: str):
     file_content = ""
     if os.path.isfile(file_path):
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 file_content = f.read()
         except Exception as e:
             file_content = f"[读取失败: {e}]"
@@ -787,7 +789,9 @@ async def get_component_config(key: str):
         # List files in directory
         try:
             files = sorted(os.listdir(file_path))
-            file_content = f"目录包含 {len(files)} 个文件：\n" + "\n".join(f"  📄 {fn}" for fn in files if not fn.startswith("."))
+            file_content = f"目录包含 {len(files)} 个文件：\n" + "\n".join(
+                f"  📄 {fn}" for fn in files if not fn.startswith(".")
+            )
         except Exception as e:
             file_content = f"[读取目录失败: {e}]"
     else:
@@ -811,4 +815,3 @@ async def get_component_config(key: str):
         "file_content": file_content,
         "env_vars": env_values,
     }
-

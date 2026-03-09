@@ -568,10 +568,11 @@ async def _process_chat_stream(
 
         # 升级检测：只做快速路径（关键词判断），跳过慢速 LLM 调用以避免阻塞前端
         # 慢速路径的 LLM 分析放到后台任务中异步执行
-        if not is_escalated:
-            if any(kw in message for kw in ["投诉", "骗", "差评", "退款", "举报", "维权", "人工", "真人"]):
-                is_escalated = True
-                escalation_reason = "keyword_escalation"
+        if not is_escalated and any(
+            kw in message for kw in ["投诉", "骗", "差评", "退款", "举报", "维权", "人工", "真人"]
+        ):
+            is_escalated = True
+            escalation_reason = "keyword_escalation"
 
         await session_manager.add_message_async_safe(
             user_id, "assistant", complete_reply, db=db, platform=platform, response_time_ms=response_time_ms

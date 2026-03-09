@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import os
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -48,8 +49,6 @@ if _USE_PROCESS_POOL_REQUESTED:
 _model_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="rag-model")
 
 # 懒加载 + 线程安全
-import threading
-
 _sentence_model = None
 _rerank_model = None
 _model_lock = threading.Lock()
@@ -256,7 +255,7 @@ class RAGEngine:
                 f"RAG 混合检索 | 查询: {query[:30]}... | "
                 f"粗排召回: {recall_k} 条 | 精排命中: {len(final_retrieved)} 条 | "
                 f"阈值过滤: {filtered_count} 条 (threshold={threshold:.2f}) | "
-                f"耗时: embed={(_t_embed-_t0)*1000:.0f}ms chroma={(_t_chroma-_t_embed)*1000:.0f}ms rerank={(_t_end-_t_chroma)*1000:.0f}ms total={(_t_end-_t0)*1000:.0f}ms"
+                f"耗时: embed={(_t_embed - _t0) * 1000:.0f}ms chroma={(_t_chroma - _t_embed) * 1000:.0f}ms rerank={(_t_end - _t_chroma) * 1000:.0f}ms total={(_t_end - _t0) * 1000:.0f}ms"
             )
             return final_retrieved
 
