@@ -87,7 +87,14 @@ export const store = reactive({
                 const data = await resSessions.json();
                 const backendIds = new Set(data.map(s => s.user_id));
                 const filteredDemo = DEMO_SESSIONS.filter(s => !backendIds.has(s.user_id));
-                this.sessions = [...data, ...filteredDemo];
+                // 合并后将 simulator 来源会话置顶
+                const merged = [...data, ...filteredDemo];
+                merged.sort((a, b) => {
+                    const aIsSim = a.platform === 'simulator' ? 1 : 0;
+                    const bIsSim = b.platform === 'simulator' ? 1 : 0;
+                    return bIsSim - aIsSim; // simulator 在前
+                });
+                this.sessions = merged;
             }
             if (resEsc.ok) {
                 const data = await resEsc.json();
