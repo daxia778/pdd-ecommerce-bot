@@ -26,18 +26,18 @@ class Settings(BaseSettings):
     embedding_model: str = "embedding-3"
 
     # ===== 性能配置 =====
-    max_history_length: int = 10
+    max_history_length: int = 20
     max_retries: int = 3
 
     # ===== 超时配置 (秒) =====
     # P1-FIX: 核心超时常量集中管理，通过 .env 可运维热更新
-    llm_chat_timeout: int = 45  # LLM 单次对话全局超时保护
+    llm_chat_timeout: int = 30  # P4-Speed: GLM-4.7 较大模型需更多时间，20s→30s 防止误杀
     pipeline_generate_timeout: int = 480  # PPT 生成步骤超时 (Playwright/NotebookLM)
     pipeline_watermark_timeout: int = 120  # 去水印步骤超时
 
     # ===== RAG 配置 =====
     # P1-7: RAG 相关性阈值，低于此分数的知识片段不注入 Prompt（0.0 = 不过滤）
-    rag_relevance_threshold: float = 0.3
+    rag_relevance_threshold: float = 0.1
 
     # ===== 平台配置 (预留) =====
     pdd_app_key: str = ""
