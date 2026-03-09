@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
 
     steps:
       - uses: actions/checkout@v4
@@ -40,7 +40,7 @@ jobs:
         run: mypy src/ config/ --ignore-missing-imports
         continue-on-error: true  # 渐进式引入，暂不阻断 PR
 
-  # ── 后端: 测试（仅 3.11，安装完整依赖）─────────────────────
+  # ── 后端: 测试（跑 3.9，安装完整依赖）─────────────────────
   backend-test:
     name: "🧪 Backend Test"
     runs-on: ubuntu-latest
@@ -49,10 +49,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Set up Python 3.9
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.9"
 
       - name: Cache pip dependencies
         uses: actions/cache@v4
