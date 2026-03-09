@@ -40,8 +40,8 @@
                               <td class="px-6 py-4 whitespace-nowrap font-bold text-gray-700">
                                 <div class="flex items-center gap-3">
                                   <div class="relative flex-shrink-0">
-                                     <div :class="['w-10 h-10 rounded-xl flex items-center justify-center text-white font-black text-sm shadow-md ring-2 ring-white', getAvatarGradient(esc.user_id)]">
-                                       {{ esc.user_id.slice(0,1) }}
+                                     <div :class="['w-10 h-10 rounded-xl flex items-center justify-center text-white font-black shadow-md ring-2 ring-white', extractChineseName(esc.user_id).length > 1 ? 'text-[11px]' : 'text-sm', getAvatarGradient(esc.user_id)]">
+                                       {{ extractChineseName(esc.user_id) }}
                                      </div>
                                      <div v-if="idx === 0 && filterType === 'all'" class="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white animate-pulse shadow-sm shadow-red-300"></div>
                                   </div>
@@ -126,6 +126,18 @@ const getAvatarGradient = (name) => {
     let hash = 0;
     for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
     return AVATAR_GRADIENTS[Math.abs(hash) % AVATAR_GRADIENTS.length];
+};
+
+// 提取纯中文字符用于头像显示（最多2个字）
+const extractChineseName = (name) => {
+    if (!name) return '客';
+    const chineseChars = name.match(/[\u4e00-\u9fa5]/g);
+    if (chineseChars && chineseChars.length > 0) {
+        return chineseChars.slice(0, 2).join('');
+    }
+    const cleanEn = name.replace(/[^a-zA-Z]/g, '');
+    if (cleanEn) return cleanEn.slice(0, 2).toUpperCase();
+    return name.slice(0, 1).toUpperCase() || '客';
 };
 
 onMounted(() => {

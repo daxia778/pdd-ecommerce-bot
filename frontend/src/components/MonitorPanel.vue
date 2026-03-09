@@ -54,9 +54,15 @@
                 : 'bg-white border-transparent hover:border-gray-200 hover:bg-gray-50 hover:shadow-sm hover:-translate-y-0.5'
             ]"
           >
+            <!-- 模拟器会话标签（最高优先级） -->
+            <span
+              v-if="session.platform === 'simulator'"
+              class="absolute top-2 right-2 text-[9px] font-bold bg-cyan-100 text-cyan-700 px-1.5 py-0.5 rounded-full ring-1 ring-cyan-200 flex items-center gap-0.5"
+            >🤖 模拟器</span>
+
             <!-- AI 暂停状态标签 -->
             <span
-              v-if="store.pausedSessions[session.user_id]"
+              v-else-if="store.pausedSessions[session.user_id]"
               class="absolute top-2 right-2 text-[9px] font-bold uppercase bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded-full"
             >人工接管</span>
 
@@ -66,7 +72,10 @@
               class="absolute top-2 right-2 text-[9px] font-bold uppercase bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full ring-1 ring-purple-200"
             >演示数据</span>
 
-            <div class="flex items-start mb-1.5">
+            <div class="flex items-center mb-1.5">
+              <div :class="['w-7 h-7 rounded-lg flex items-center justify-center text-white font-black text-[10px] mr-2 shadow-sm shrink-0', getAvatarGradient(session.user_id)]">
+                {{ extractChineseName(formatUserId(session.user_id)) }}
+              </div>
               <span class="font-bold text-gray-700 truncate flex-1 text-sm mr-2">{{ formatUserId(session.user_id) }}</span>
               <span v-if="session.platform" class="text-[9px] uppercase font-bold text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded shrink-0">{{ session.platform }}</span>
             </div>
@@ -495,7 +504,12 @@ const filteredSessions = computed(() => {
     });
   }
 
-  return list;
+  // 模拟器会话置顶
+  return list.slice().sort((a, b) => {
+    const aIsSim = a.platform === 'simulator' ? 1 : 0;
+    const bIsSim = b.platform === 'simulator' ? 1 : 0;
+    return bIsSim - aIsSim;
+  });
 });
 
 const totalPages = computed(() => Math.ceil(filteredSessions.value.length / ITEMS_PER_PAGE));
@@ -525,8 +539,11 @@ const getAvatarGradient = (name) => {
 
 const formatUserId = (id) => {
     if (!id) return '';
+    if (id.startsWith('sim_')) {
+        return '🤖 模拟-' + id.replace('sim_', '');
+    }
     if (id.startsWith('demo_buyer_sim_')) {
-        return '模拟买家_' + id.replace('demo_buyer_sim_', '');
+        return '🤖 模拟买家_' + id.replace('demo_buyer_sim_', '');
     }
     if (id.startsWith('demo_buyer_')) {
         return '测试买家_' + id.replace('demo_buyer_', '');
@@ -555,9 +572,13 @@ const isPaused = computed(() =>
 const MOCK_REQUIREMENTS = {
   '【大四】林同学': { topic: '毕业答辩PPT', pages: '25页', style: '学术严谨 / 校园风', deadline: '下周', budget: '约337元', audience: '导师/答辩委员会', outline: '研究背景 -> 方法论 -> 结论', assets: '论文摘要.doc' },
   '王总(找融资)': { topic: '大健康融资商业计划书(BP)', pages: '约20页', style: '高端科技 / 创投风', deadline: '下周一晚上 (特急)', budget: '5000元', audience: '风险投资人', outline: '核心痛点 -> 解决方案 -> 商业模式', assets: '官网资料.pdf' },
-  'HR-Amanda': { topic: 'SaaS季度总结汇报', pages: '30页', style: '现代科技风', deadline: '本月底', budget: '约1800元', audience: '全公司员工', outline: '-', assets: '-' },
+  '人事-小玉': { topic: 'SaaS季度总结汇报', pages: '30页', style: '现代科技风', deadline: '本月底', budget: '约1800元', audience: '全公司员工', outline: '-', assets: '-' },
   '🔥急单-李先生': { topic: '市政工程投标方案', pages: '45页', style: '严肃正规 (纯美化排版)', deadline: '明早9点前', budget: '3600元', audience: '评标委员会', outline: '企业资质 -> 施工方案 -> 报价清单', assets: '标书原稿.doc' },
-  '智创科技-陈总监': { topic: '展会全案', pages: '宽屏PPT(页数待定)', style: '智领未来·云端共生主题', deadline: '下个月', budget: '约30000元', audience: '展会参观者/行业客户', outline: '-', assets: 'VI规范.pdf' }
+  '智创科技-陈总监': { topic: '展会全案', pages: '宽屏PPT(页数待定)', style: '智领未来·云端共生主题', deadline: '下个月', budget: '约30000元', audience: '展会参观者/行业客户', outline: '-', assets: 'VI规范.pdf' },
+  '微商加盟-赵姐': { topic: '微商招商加盟课件', pages: '40页', style: '前10高端定制+后30商务精装', deadline: '初稿2-3天', budget: '3000元', audience: '加盟代理', outline: '封面介绍 -> 核心产品 -> 盈利模式', assets: '原稿.pdf' },
+  '婚礼策划-莹莹': { topic: '婚礼纪念动态相册', pages: '20多页', style: '浪漫温馨/动态视效', deadline: '半个月内', budget: '800元', audience: '婚礼现场宾客', outline: '-', assets: '照片与视频.zip' },
+  '年终汇报-王经理': { topic: '集团年度汇报PPT翻新', pages: '15页', style: '集团级高端/Logo蓝', deadline: '后天下午彩排前 (加急)', budget: '约2340元', audience: '集团大老板', outline: '-', assets: '旧版PPT.pptx' },
+  'sim_小张': { topic: 'PPT数据图表售后修改', pages: '第3页', style: '-', deadline: '15分钟内 (紧急)', budget: '-', audience: '下午汇报', outline: '-', assets: '修正数据.xlsx' }
 };
 
 // Internal editable state for the current selected user

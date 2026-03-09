@@ -267,7 +267,7 @@ class LLMClient:
 
                 try:
                     logger.debug(
-                        f"LLM 调用 | 厂商 {p_name} | 尝试 {attempt + 1}/{max_attempts} | Key: ...{api_key[-8:]}"
+                        f"LLM 调用 | 厂商 {p_name} | 尝试 {attempt + 1}/{max_attempts} | Key: ***{api_key[-4:]}"
                     )
                     t_start = time.monotonic()
 
@@ -296,11 +296,11 @@ class LLMClient:
 
                 except litellm.AuthenticationError as e:
                     last_error = e
-                    logger.error(f"LLM 鉴权失败，剔除厂商 [{p_name}] 的 Key: ...{api_key[-8:]} | {e}")
+                    logger.error(f"LLM 鉴权失败，剔除厂商 [{p_name}] 的 Key: ***{api_key[-4:]} | {e}")
                     provider["banned"].add(api_key)
                 except Exception as e:
                     last_error = e
-                    logger.warning(f"LLM 调用失败 | 厂商: {p_name} | Key: ...{api_key[-8:]} | {type(e).__name__}: {e}")
+                    logger.warning(f"LLM 调用失败 | 厂商: {p_name} | Key: ***{api_key[-4:]} | {type(e).__name__}: {e}")
 
                     # P0-3 修复: 累加连续失败次数，触发熔断
                     failures = provider.get("consecutive_failures", 0) + 1

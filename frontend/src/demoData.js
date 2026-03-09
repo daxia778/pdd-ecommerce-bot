@@ -1,11 +1,15 @@
 export const DEMO_SESSIONS = [
     { user_id: '【大四】林同学', platform: 'wechat', message_count: 9, updated_at: '2026-03-06 15:30:22', is_demo: true },
     { user_id: '王总(找融资)', platform: 'wechat', message_count: 11, updated_at: '2026-03-06 15:28:15', is_demo: true, needs_intervention: true },
-    { user_id: 'HR-Amanda', platform: 'pdd', message_count: 7, updated_at: '2026-03-06 15:25:01', is_demo: true },
+    { user_id: '人事-小玉', platform: 'pdd', message_count: 7, updated_at: '2026-03-06 15:25:01', is_demo: true },
     { user_id: '🔥急单-李先生', platform: 'taobao', message_count: 8, updated_at: '2026-03-06 15:20:10', is_demo: true },
     { user_id: '愤怒的甲方(售后)', platform: 'pdd', message_count: 9, updated_at: '2026-03-06 15:15:33', is_demo: true, needs_intervention: true },
     { user_id: '智创科技-陈总监', platform: 'wechat', message_count: 6, updated_at: '2026-03-06 15:10:05', is_demo: true },
     { user_id: '补开发票-张三', platform: 'pdd', message_count: 4, updated_at: '2026-03-06 14:00:00', is_demo: true },
+    { user_id: 'sim_小张', platform: 'simulator', message_count: 7, updated_at: '2026-03-06 15:40:00', is_demo: true },
+    { user_id: '微商加盟-赵姐', platform: 'wechat', message_count: 8, updated_at: '2026-03-06 15:35:00', is_demo: true },
+    { user_id: '婚礼策划-莹莹', platform: 'pdd', message_count: 9, updated_at: '2026-03-06 15:25:00', is_demo: true },
+    { user_id: '年终汇报-王经理', platform: 'taobao', message_count: 10, updated_at: '2026-03-06 15:15:00', is_demo: true },
 ];
 
 export const DEMO_CHATS = {
@@ -33,9 +37,9 @@ export const DEMO_CHATS = {
         { role: 'assistant', platform: 'bot', content: '收到您的定金！财务已确认。\n专属服务群已建好，群名【王总-大健康融资BP专案组】，主策划老李和设计总监Amy已经就位，请您在微信确认通过入群邀请。祝您一路顺风，我们群里见！', created_at: '15:20:03' },
         { role: 'user', content: '🤝👍🌹', created_at: '15:28:15' }
     ],
-    'HR-Amanda': [
-        { role: 'user', content: '你好，我们需要做一份季度总结的PPT，能发点你们的案例看看吗？', created_at: '15:15:00' },
-        { role: 'assistant', platform: 'bot', content: '您好，Amanda！季度总结PPT是我们做过最多的类型之一。\n这里为您准备了几套不同风格的精选案例：\n1. 📊 [稳重商务风-适合国企/传统行业]\n2. 🚀 [现代科技风-适合互联网/科技公司]\n3. ✨ [极简扁平风-适合外企/创意团队]\n\n您看贵公司偏好哪种风格呢？如果方便，可以发一下贵公司的Logo，我们可以为您免费做一个封面Demo。', created_at: '15:15:02' },
+    '人事-小玉': [
+        { role: 'user', content: '你好，我是小玉，我们公司HR部门需要做一份季度总结的PPT，能发点你们的案例看看吗？', created_at: '15:15:00' },
+        { role: 'assistant', platform: 'bot', content: '您好小玉！季度总结PPT是我们做过最多的类型之一。\n这里为您准备了几套不同风格的精选案例：\n1. 📊 [稳重商务风-适合国企/传统行业]\n2. 🚀 [现代科技风-适合互联网/科技公司]\n3. ✨ [极简扁平风-适合外企/创意团队]\n\n您看贵公司偏好哪种风格呢？如果方便，可以发一下贵公司的Logo，我们可以为您免费做一个封面Demo。', created_at: '15:15:02' },
         { role: 'user', content: '我们是做SaaS的，现代科技风比较合适。这次大概有30页，主要是很多数据图表，你们能把数据图表做的好看点吗？不想用系统自带的。', created_at: '15:18:00' },
         { role: 'assistant', platform: 'bot', content: '绝对没问题！针对SaaS行业和大量数据图表的需求，我们建议采用【定制级数据可视化排版】（单价约60元/页）。\n我们会废弃系统自带图表，使用矢量图形重新绘制，确保数据清晰的同时，极具高级感和科技感。\n\n这是我们做过的数据可视化案例截图：[图片:数据图表对比.png]\n30页的话，总价预计在 1800元左右。您觉得合适吗？', created_at: '15:18:05' },
         { role: 'user', content: '看着不错。那怎么开发票？我们公司报销需要增值税专用发票。', created_at: '15:22:00' },
@@ -76,6 +80,48 @@ export const DEMO_CHATS = {
         { role: 'assistant', platform: 'bot', content: '您好！合作愉快，可以补开发票的。\n请问您需要开具增值税普通发票还是专用发票呢？\n另外，请直接在对话框回复您的：\n1. 企业全称抬头\n2. 纳税人识别号(税号)\n3. 接收电子发票的有效邮箱地址（专票需提供详细地址和开户行）', created_at: '13:50:02' },
         { role: 'user', content: '普票就行。\n抬头：杭州三叶草网络科技有限公司\n税号：91330100XXXXXX456T\n邮箱：zhangsan@sanyecao.com', created_at: '13:55:00' },
         { role: 'assistant', platform: 'bot', content: '✅ 已经顺利接收您的开票资料，验证无误！\n\n🎉 发票申请已提交，序列号：INV-2026-0089222。\n电子发票文档最迟会在第二个工作日下午发送至您的邮箱 zhangsan@sanyecao.com，请留意查收。如果没收到可以随时联系我！', created_at: '13:55:05' }
+    ],
+    'sim_小张': [
+        { role: 'user', content: '你好，之前做的那个PPT有点问题，想改一下。', created_at: '15:35:00' },
+        { role: 'assistant', platform: 'bot', content: '您好小张！很抱歉给您带来不便，请问具体是哪里需要修改呢？', created_at: '15:35:02' },
+        { role: 'user', content: '第三页的数据图表不对，我发你正确的数据。', created_at: '15:36:00' },
+        { role: 'assistant', platform: 'bot', content: '好的，已经收到您反馈的情况！请您发送正确的数据，我会马上安排设计师跟进修改。', created_at: '15:36:03' },
+        { role: 'user', content: '附件是Excel表，里头标红的就是正确的。', created_at: '15:38:00' },
+        { role: 'assistant', platform: 'bot', content: '文件收到啦！已经安排设计师为您紧急修改图表。预计15分钟内返回修改后的稿件。', created_at: '15:38:05' },
+        { role: 'user', content: '好的，尽快弄完，这影响到下午的汇报。', created_at: '15:40:00' }
+    ],
+    '微商加盟-赵姐': [
+        { role: 'user', content: '亲，我要做一个招代理的宣讲课件，大概多少钱？', created_at: '15:20:00' },
+        { role: 'assistant', platform: 'bot', content: '您好赵姐！招商加盟类课件我们非常擅长，主要突出盈利模式和加入势能。\n我们的费用是根据页数和设计级别来定的。基础精装版 50元/页，高端定制版 100元/页（含炫酷微动画）。请问大概需要做多少页呢？', created_at: '15:20:05' },
+        { role: 'user', content: '我之前手稿写了有大概40多页，我想用点高端的风格，能便宜点不？', created_at: '15:22:00' },
+        { role: 'assistant', platform: 'bot', content: '了解了赵姐。40页如果做高端定制，原价是4000元。您这边页数比较多，我可以给您申请一个【大客户8.5折优惠】，折后大概3400元。\n这个价格包含了文案润色、全套视觉设计和无限次细节修改，非常划算的！您看意下如何呢？', created_at: '15:22:06' },
+        { role: 'user', content: '还是有点贵，包个包3000能不能做？', created_at: '15:25:00' },
+        { role: 'assistant', platform: 'bot', content: '赵姐真是太会讲价了😅 这样吧，3000元我们做不到全篇高端定制，但我给您一个折中方案：\n前10页（封面、介绍、核心产品）我们用【高端定制】级别，后30页我们用【商务精装】级别。这样算下来正好是 3000元，而且既有门面，又控制了成本。您觉得这个方案怎么样？', created_at: '15:25:05' },
+        { role: 'user', content: '这个办法不错，可以接受！什么时候能出初稿啊？', created_at: '15:28:00' },
+        { role: 'assistant', platform: 'bot', content: '太好了赵姐！您先拍下这个1500元的定金链接：[PPT定制通用定金]。\n拍下后我马上拉专属设计群。40页的工作量，初稿大概需要2-3天，我会抓紧让设计总监安排的！', created_at: '15:28:05' }
+    ],
+    '婚礼策划-莹莹': [
+        { role: 'user', content: '在吗？我的婚礼还剩半个月，我想做个关于我们俩恋爱故事的PPT在婚礼上放，你们能搞定吗？', created_at: '15:15:00' },
+        { role: 'assistant', platform: 'bot', content: '在的莹莹！恭喜步入婚姻殿堂🎉\n我们专门有【婚礼纪念】设计小组，能把你们的照片和文字做成非常浪漫温馨的动态PPT。', created_at: '15:15:03' },
+        { role: 'user', content: '太好了，我有很多我们在不同国家的旅游照，大概有100多张图，想做大概20多页的PPT。', created_at: '15:17:00' },
+        { role: 'assistant', platform: 'bot', content: '100多张图片的情况，很适合做成带音乐和高级翻页相册动画的展示。20页的【婚礼相册级PPT】，我们现在的特惠价是 800元，还包两首背景音乐的卡点剪辑哦！', created_at: '15:17:05' },
+        { role: 'user', content: '那除了照片，可以放几段短视频进去吗？我们自己录的搞怪视频。', created_at: '15:20:00' },
+        { role: 'assistant', platform: 'bot', content: '完全没问题！我们可以把视频嵌在PPT里自动播放。只要把视频源文件发给设计师就好啦。', created_at: '15:20:03' },
+        { role: 'user', content: '好滴，我很期待最终效果。怎么付款呢？', created_at: '15:22:00' },
+        { role: 'assistant', platform: 'bot', content: '莹莹爽快！您可以直接点击：[婚礼专属定制全款800元链接]。支付后我会拉设计沟通群，您把照片和视频打包发到群里即可。', created_at: '15:22:05' },
+        { role: 'user', content: '付好了付好了！快拉群我发资料！', created_at: '15:25:00' }
+    ],
+    '年终汇报-王经理': [
+        { role: 'user', content: '客服你好，公司要在集团做年度汇报，我有个旧版PPT想让你们翻新一下，大概15页。', created_at: '15:00:00' },
+        { role: 'assistant', platform: 'bot', content: '您好王经理！年度汇报PPT翻新是我们这边的强项。\n请问您的旧版PPT主要需要美化哪些方面？是整体风格老气，还是数据图表不够清晰呢？', created_at: '15:00:05' },
+        { role: 'user', content: '都有吧。最关键的是老板觉得不够大气。集团大老板也会在下面听，必须要非常有排面。', created_at: '15:02:00' },
+        { role: 'assistant', platform: 'bot', content: '明白了，面对集团领导的汇报，必须做到逻辑清晰、视觉震撼。\n我推荐您选择我们的【集团级高端全定制】服务，120元/页。我们会用高级配色、重新绘制所有数据图表（告别系统自带图表），并加入企业VI元素，保证排面拉满。', created_at: '15:02:05' },
+        { role: 'user', content: '钱不是问题，公司报销的。但我只有两天时间了，后天下午彩排就得用。', created_at: '15:05:00' },
+        { role: 'assistant', platform: 'bot', content: '时间上比较紧迫了。如果您马上能定下来，我们可以走【加急通道】，安排两位高级设计师协同作业。加急费是总价的30%，也就是总共大概花2340块钱左右。\n确认的话，明天晚上就能把初稿发给您。', created_at: '15:05:08' },
+        { role: 'user', content: '可以，能保证质量就行。文件现在能发过来吗？', created_at: '15:10:00' },
+        { role: 'assistant', platform: 'bot', content: '可以的！请您在这个对话框直接发送旧版PPT文件，并备注一下有没有必须保留的内容和领导偏好的主色调。同时请拍下此链接支付定金：[加急定制专享定金1000元]。', created_at: '15:10:05' },
+        { role: 'user', content: '文件发了。主色调就按我们公司的Logo蓝来吧。定金已付。', created_at: '15:12:00' },
+        { role: 'assistant', platform: 'bot', content: '收到定金和文件！项目组已经成立，由于是加急状态，我们的主设计师马上给您看两页封面及目录的Demo风格。请留意稍后的消息推送！', created_at: '15:12:03' }
     ]
 };
 
@@ -90,7 +136,7 @@ export const DEMO_ESCALATIONS = [
     // ── 大客户 / 高价值 / 加急 ─────────────────────────────────
     { id: 4, user_id: '王总(找融资)', reason_label: '大客户加急/复杂需求', priority: 'urgent', trigger_message: '价格好说，关键是东西要干！下周二我就要飞北京见薛总，能赶出来吗？时间很紧啊！' },
     { id: 5, user_id: '🔥急单-李先生', reason_label: '限时加急/夜间突击单', priority: 'urgent', trigger_message: '明早9点投标！！文件刚发你了，今晚必须搞完！！钱不是问题！！！' },
-    { id: 6, user_id: 'CEO-David(外企)', reason_label: '大客户/语言障碍', priority: 'high', trigger_message: 'I need bilingual PPT slides for our board meeting. English + Chinese. The budget is flexible, but quality must be top-tier. Can your team handle this?' },
+    { id: 6, user_id: '外企CEO-大卫', reason_label: '大客户/语言障碍', priority: 'high', trigger_message: 'I need bilingual PPT slides for our board meeting. English + Chinese. The budget is flexible, but quality must be top-tier. Can your team handle this?' },
 
     // ── 规则触发自动接管 ──────────────────────────────────────
     { id: 7, user_id: '张工程师(定制插件需求)', reason_label: '规则触发/超出服务范围', priority: 'normal', trigger_message: '我需要一个可以自动运行的PPT宏脚本，当某个数据超过阈值的时候图表颜色自动变红，这个你们能写代码实现吗？' },
