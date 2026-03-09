@@ -52,9 +52,8 @@ async def lifespan(app: FastAPI):
     # 新增表/字段时，使用 `alembic revision --autogenerate -m "描述"` 生成迁移脚本，
     # 应用启动时自动执行 `alembic upgrade head`。
     try:
-        from alembic.config import Config as AlembicConfig
-
         from alembic import command as alembic_command
+        from alembic.config import Config as AlembicConfig
 
         alembic_cfg = AlembicConfig("alembic.ini")
         alembic_command.upgrade(alembic_cfg, "head")
