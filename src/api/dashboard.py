@@ -559,13 +559,21 @@ async def get_system_health(db: DBSession = Depends(get_db)):
     # 1. PDD API 连接状态
     from src.services.pdd_api_client import pdd_api_client
 
-    pdd_configured = bool(pdd_api_client.client_id and pdd_api_client.client_secret and pdd_api_client.access_token)
+    # 检测占位符值 — "your_xxx" 类占位符不算已配置
+    def _is_real_value(v):
+        return bool(v) and not str(v).startswith("your_") and v != "placeholder"
+
+    pdd_configured = all([
+        _is_real_value(pdd_api_client.client_id),
+        _is_real_value(pdd_api_client.client_secret),
+        _is_real_value(pdd_api_client.access_token),
+    ])
     components.append(
         {
             "name": "PDD 开放平台",
             "key": "pdd_api",
-            "status": "healthy" if pdd_configured else "degraded",
-            "detail": "凭证已配置，连接正常" if pdd_configured else "凭证未配置，降级为日志模式",
+            "status": "healthy" if pdd_configured else "inactive",
+            "detail": "凭证已配置，连接正常" if pdd_configured else "凭证未配置，点击查看配置指引",
             "icon": "🛒",
         }
     )
@@ -713,3 +721,94 @@ async def get_system_health(db: DBSession = Depends(get_db)):
         overall = "healthy"
 
     return {"overall": overall, "components": components}
+
+
+@router.get("/api/dashboard/component-config/{key}")
+async def get_component_config(key: str):
+    """
+    返回指定组件的配置文件内容，供前端管理面板在线查看。
+    """
+    import os
+
+    config_map = {
+        "pdd_api": {
+            "title": "PDD 开放平台配置",
+            "file": "config/settings.py",
+            "env_keys": ["PDD_CLIENT_ID", "PDD_CLIENT_SECRET", "PDD_ACCESS_TOKEN"],
+        },
+        "llm": {
+            "title": "LLM 大模型配置",
+            "file": "config/settings.py",
+            "env_keys": ["ZHIPU_API_KEYS", "MAIN_CHAT_MODEL", "DEEPSEEK_API_KEYS", "LLM_CHAT_TIMEOUT", "MAX_RETRIES"],
+        },
+        "rag": {
+            "title": "RAG 知识库配置",
+            "file": "data/knowledge/",
+            "env_keys": ["RAG_TOP_K", "RAG_RERANK_TOP_N"],
+        },
+        "message_queue": {
+            "title": "消息重试队列配置",
+            "file": "src/services/message_retry_queue.py",
+            "env_keys": [],
+        },
+        "wecom": {
+            "title": "企业微信配置",
+            "file": "config/settings.py",
+            "env_keys": ["WECOM_CORP_ID", "WECOM_AGENT_ID", "WECOM_SECRET"],
+        },
+        "prompt": {
+            "title": "Prompt 话术配置",
+            "file": "data/prompts/ppt_consultant.yaml",
+            "env_keys": [],
+        },
+        "database": {
+            "title": "SQLite 数据库配置",
+            "file": "config/settings.py",
+            "env_keys": ["DATABASE_URL"],
+        },
+    }
+
+    if key not in config_map:
+        return {"error": f"未知组件: {key}"}
+
+    info = config_map[key]
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    file_path = os.path.join(base_dir, info["file"])
+
+    # Read config file content
+    file_content = ""
+    if os.path.isfile(file_path):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                file_content = f.read()
+        except Exception as e:
+            file_content = f"[读取失败: {e}]"
+    elif os.path.isdir(file_path):
+        # List files in directory
+        try:
+            files = sorted(os.listdir(file_path))
+            file_content = f"目录包含 {len(files)} 个文件：\n" + "\n".join(f"  📄 {fn}" for fn in files if not fn.startswith("."))
+        except Exception as e:
+            file_content = f"[读取目录失败: {e}]"
+    else:
+        file_content = f"[文件不存在: {info['file']}]"
+
+    # Read relevant env vars (masked for security)
+    env_values = {}
+    for env_key in info.get("env_keys", []):
+        val = os.environ.get(env_key, "")
+        if val:
+            if any(secret in env_key.upper() for secret in ["SECRET", "KEY", "TOKEN", "PASSWORD"]):
+                env_values[env_key] = val[:4] + "****" + val[-4:] if len(val) > 8 else "****"
+            else:
+                env_values[env_key] = val
+        else:
+            env_values[env_key] = "(未配置)"
+
+    return {
+        "title": info["title"],
+        "file_path": info["file"],
+        "file_content": file_content,
+        "env_vars": env_values,
+    }
+
