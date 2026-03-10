@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import os
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -47,15 +48,20 @@ if _USE_PROCESS_POOL_REQUESTED:
     )
 _model_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="rag-model")
 
-# 懒加载 - 避免启动时长时间等待
+# 懒加载 + 线程安全
 _sentence_model = None
 _rerank_model = None
+_model_lock = threading.Lock()
 
 
 def get_sentence_model():
-    """获取本地 Embedding 模型（懒加载单例）"""
+    """获取本地 Embedding 模型（懒加载单例，线程安全）"""
     global _sentence_model
-    if _sentence_model is None:
+    if _sentence_model is not None:
+        return _sentence_model
+    with _model_lock:
+        if _sentence_model is not None:  # double-check
+            return _sentence_model
         try:
             from sentence_transformers import SentenceTransformer
 
@@ -69,9 +75,13 @@ def get_sentence_model():
 
 
 def get_rerank_model():
-    """获取本地 Rerank 模型（懒加载单例）"""
+    """获取本地 Rerank 模型（懒加载单例，线程安全）"""
     global _rerank_model
-    if _rerank_model is None:
+    if _rerank_model is not None:
+        return _rerank_model
+    with _model_lock:
+        if _rerank_model is not None:  # double-check
+            return _rerank_model
         try:
             from sentence_transformers import CrossEncoder
 
@@ -82,6 +92,28 @@ def get_rerank_model():
             logger.error(f"❌ 本地 Rerank 模型加载失败: {e}")
             raise
     return _rerank_model
+
+
+def prewarm_models():
+    """在服务启动时真正预加载 Embedding + Rerank 模型，并做暖身推理避免首次延迟"""
+    logger.info("⏳ 预加载 RAG 模型（Embedding + Rerank）...")
+    try:
+        model = get_sentence_model()
+        reranker = get_rerank_model()
+        # 暖身推理：用接近真实长度的文本，让 PyTorch 为常见序列长度预编译计算图
+        # 短文本 warmup 不够，真实文档通常 100-300 字，首次推理仍会触发重编译
+        logger.info("⏳ 执行暖身推理（模拟真实文档长度）...")
+        dummy_query = "PPT定制价格多少钱一页报价" * 3  # ~60字，接近真实 query
+        dummy_doc = (
+            "我们提供专业PPT定制服务，价格分为日常制作3元每页、标准制作10元每页、精美制作20元每页。" * 5
+        )  # ~200字，接近真实文档
+        model.encode(dummy_query, show_progress_bar=False)
+        # 模拟 6 对 query-doc rerank（与实际 recall_k 一致）
+        pairs = [(dummy_query, dummy_doc)] * 6
+        reranker.predict(pairs)
+        logger.info("✅ RAG 模型预加载完成，首次查询将立即响应")
+    except Exception as e:
+        logger.warning(f"⚠️ RAG 模型预加载失败，将在首次查询时再加载: {e}")
 
 
 def get_local_embedding(text: str) -> list[float]:
@@ -141,16 +173,22 @@ class RAGEngine:
         threshold = relevance_threshold if relevance_threshold is not None else settings.rag_relevance_threshold
 
         try:
-            query_embedding = get_local_embedding(query)
+            import time as _time
 
-            # 1. 粗排 (Recall) - 扩大召回基数
-            recall_k = min(top_k * 3, self._collection.count())
+            _t0 = _time.monotonic()
+
+            query_embedding = get_local_embedding(query)
+            _t_embed = _time.monotonic()
+
+            # 1. 粗排 (Recall) - recall_k=top_k*2 平衡召回率与 rerank 速度
+            recall_k = min(top_k * 2, self._collection.count())
+            # 直接无过滤查询（知识库文档无 deleted 字段，跳过无意义的 where 过滤）
             results = self._collection.query(
                 query_embeddings=[query_embedding],
                 n_results=recall_k,
                 include=["documents", "metadatas", "distances"],
-                where={"deleted": "false"},  # P2-3: 排查已软删除的数据
             )
+            _t_chroma = _time.monotonic()
 
             if not results["documents"] or not results["documents"][0]:
                 return []
@@ -212,10 +250,12 @@ class RAGEngine:
                 else:
                     filtered_count += 1
 
+            _t_end = _time.monotonic()
             logger.info(
                 f"RAG 混合检索 | 查询: {query[:30]}... | "
                 f"粗排召回: {recall_k} 条 | 精排命中: {len(final_retrieved)} 条 | "
-                f"阈值过滤: {filtered_count} 条 (threshold={threshold:.2f})"
+                f"阈值过滤: {filtered_count} 条 (threshold={threshold:.2f}) | "
+                f"耗时: embed={(_t_embed - _t0) * 1000:.0f}ms chroma={(_t_chroma - _t_embed) * 1000:.0f}ms rerank={(_t_end - _t_chroma) * 1000:.0f}ms total={(_t_end - _t0) * 1000:.0f}ms"
             )
             return final_retrieved
 

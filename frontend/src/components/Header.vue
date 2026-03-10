@@ -108,6 +108,7 @@ const names = {
   'statistics': '数据统计',
   'interventions': '人工干预池',
   'pipeline': '生产流水线',
+  'health': '链路健康度',
   'knowledge': '知识库管理',
   'simulator': '买家模拟器',
   'settings': '系统配置'

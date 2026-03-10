@@ -78,13 +78,15 @@
                                      "{{ esc.trigger_message }}"
                                  </div>
                               </td>
-                              <td class="px-6 py-4 text-right space-x-2 whitespace-nowrap">
-                                  <button @click="goToChat(esc.user_id)" class="bg-white border border-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-gray-50 transition-all">
-                                      去回复
-                                  </button>
-                                  <button @click="resolveEscalation(esc.id)" class="bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-red-700 shadow-sm shadow-red-200 transition-all">
-                                      直接关闭
-                                  </button>
+                              <td class="px-4 py-4 text-right whitespace-nowrap">
+                                  <div class="flex items-center justify-end gap-2.5">
+                                    <button @click="goToChat(esc.user_id)" class="bg-white border border-gray-200 text-gray-700 px-3.5 py-1.5 rounded-lg text-xs font-bold hover:bg-gray-50 transition-all">
+                                        去回复
+                                    </button>
+                                    <button @click="resolveEscalation(esc.id)" class="bg-red-600 text-white px-3.5 py-1.5 rounded-lg text-xs font-bold hover:bg-red-700 shadow-sm shadow-red-200 transition-all">
+                                        直接关闭
+                                    </button>
+                                  </div>
                               </td>
                           </tr>
                           <tr v-if="filteredEscalations.length === 0">

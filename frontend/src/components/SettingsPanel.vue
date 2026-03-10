@@ -104,6 +104,89 @@
 
               <hr class="border-gray-100" />
 
+              <!-- 模型 API 接入测试 -->
+              <div>
+                  <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-sm font-bold text-gray-700 border-l-4 border-red-500 pl-3">🔌 模型 API 接入测试 (LLM Connection Test)</h3>
+                    <span v-if="llmConfigured" class="flex items-center gap-1.5 px-3 py-1 bg-green-50 border border-green-200 rounded-full text-xs font-bold text-green-600">
+                      <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                      API 已配置 · {{ testModel }}
+                    </span>
+                    <span v-else class="flex items-center gap-1.5 px-3 py-1 bg-amber-50 border border-amber-200 rounded-full text-xs font-bold text-amber-600">
+                      <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+                      未配置
+                    </span>
+                  </div>
+                  <p class="text-xs text-gray-400 mb-4 pl-4">当前正在使用的 API Key 已自动加载。您可以修改后点击测试按钮验证，确认无误后保存到 .env 文件。</p>
+                  <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                     <div class="md:col-span-2">
+                        <label class="block text-[11px] font-bold text-gray-500 uppercase mb-1">API Key</label>
+                        <input type="text" v-model="testApiKey" placeholder="输入完整的 API Key（如 83af...agSf）"
+                          class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-red-500 outline-none" />
+                     </div>
+                     <div>
+                        <label class="block text-[11px] font-bold text-gray-500 uppercase mb-1">模型</label>
+                        <select v-model="testModel" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none bg-white">
+                           <option value="glm-4-flash">GLM-4 Flash (快速)</option>
+                           <option value="glm-4-air">GLM-4 Air (均衡)</option>
+                           <option value="glm-4-plus">GLM-4 Plus (高级)</option>
+                           <option value="glm-4.7">GLM-4.7 (最新旗舰)</option>
+                        </select>
+                     </div>
+                  </div>
+                  <div class="flex items-center gap-3 mb-4">
+                     <button @click="runLLMTest" :disabled="testLoading || !testApiKey.trim()"
+                       class="px-5 py-2 bg-gradient-to-r from-red-500 to-orange-500 text-white rounded-xl text-sm font-bold hover:from-red-600 hover:to-orange-600 transition-all shadow-sm shadow-red-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+                       <span v-if="testLoading" class="animate-spin">↻</span>
+                       <span v-else>⚡</span>
+                       {{ testLoading ? '测试中...' : '发起连通测试' }}
+                     </button>
+                     <button v-if="testResult && testResult.success" @click="saveLLMConfig" :disabled="saveLoading"
+                       class="px-5 py-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-xl text-sm font-bold hover:from-green-600 hover:to-emerald-700 transition-all shadow-sm shadow-green-200 disabled:opacity-50 flex items-center gap-2">
+                       <span v-if="saveLoading" class="animate-spin">↻</span>
+                       <span v-else>💾</span>
+                       {{ saveLoading ? '保存中...' : '保存到 .env' }}
+                     </button>
+                     <span v-if="testResult" class="text-xs font-bold" :class="testResult.success ? 'text-green-600' : 'text-red-600'">
+                        {{ testResult.success ? '✅ 连通成功' : '❌ 连接失败' }}
+                     </span>
+                     <span v-if="saveMsg" class="text-xs font-bold text-blue-600">{{ saveMsg }}</span>
+                  </div>
+                  <!-- 测试结果 -->
+                  <div v-if="testResult" class="rounded-xl border p-4 transition-all" :class="testResult.success ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'">
+                     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
+                        <div>
+                          <div class="text-[10px] text-gray-500 font-bold uppercase">延迟</div>
+                          <div class="text-lg font-black" :class="testResult.latency_ms <= 3000 ? 'text-green-600' : testResult.latency_ms <= 8000 ? 'text-amber-600' : 'text-red-600'">
+                            {{ testResult.latency_ms }}ms
+                          </div>
+                        </div>
+                        <div>
+                          <div class="text-[10px] text-gray-500 font-bold uppercase">模型</div>
+                          <div class="text-sm font-bold text-gray-800">{{ testResult.model }}</div>
+                        </div>
+                        <div>
+                          <div class="text-[10px] text-gray-500 font-bold uppercase">Key</div>
+                          <div class="text-sm font-mono font-bold text-gray-600">{{ testResult.key_suffix }}</div>
+                        </div>
+                        <div>
+                          <div class="text-[10px] text-gray-500 font-bold uppercase">Tokens</div>
+                          <div class="text-sm font-bold text-gray-800">{{ testResult.tokens_used || '-' }}</div>
+                        </div>
+                     </div>
+                     <div v-if="testResult.reply" class="mt-3 pt-3 border-t border-green-200">
+                        <div class="text-[10px] text-gray-500 font-bold uppercase mb-1">AI 回复</div>
+                        <div class="text-xs text-gray-700 bg-white/60 rounded-lg p-2 font-mono">{{ testResult.reply }}</div>
+                     </div>
+                     <div v-if="testResult.error" class="mt-3 pt-3 border-t border-red-200">
+                        <div class="text-[10px] text-red-600 font-bold uppercase mb-1">错误详情</div>
+                        <div class="text-xs text-red-700 bg-white/60 rounded-lg p-2 font-mono break-all">{{ testResult.error }}</div>
+                     </div>
+                  </div>
+              </div>
+
+              <hr class="border-gray-100" />
+
               <!-- L2 Prompt 动态外挂配置 (全屏宽) -->
               <div>
                   <div class="flex justify-between items-end mb-4">
@@ -156,9 +239,96 @@ import { store } from '../store.js';
 
 const ragThreshold = ref(0.7);
 
+// LLM API 测试相关
+const testApiKey = ref('');
+const testModel = ref('glm-4-flash');
+const testLoading = ref(false);
+const testResult = ref(null);
+const saveLoading = ref(false);
+const saveMsg = ref('');
+const llmConfigured = ref(false);
+
+const loadCurrentLLMConfig = async () => {
+  try {
+    const token = localStorage.getItem('pdd_admin_token');
+    const res = await fetch('/api/dashboard/llm-config', {
+      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.configured && data.api_key_full) {
+      testApiKey.value = data.api_key_full;
+      testModel.value = data.model || 'glm-4-flash';
+      llmConfigured.value = true;
+    }
+  } catch (e) {
+    console.warn('加载 LLM 配置失败:', e);
+  }
+};
+
 onMounted(() => {
   store.loadPrompt('ppt_consultant');
+  loadCurrentLLMConfig();
 });
+
+const runLLMTest = async () => {
+  testLoading.value = true;
+  testResult.value = null;
+  try {
+    const token = localStorage.getItem('pdd_admin_token');
+    const res = await fetch('/api/dashboard/llm-test', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        api_key: testApiKey.value.trim(),
+        model: testModel.value,
+      }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    testResult.value = await res.json();
+  } catch (e) {
+    testResult.value = {
+      success: false,
+      latency_ms: 0,
+      model: testModel.value,
+      reply: null,
+      tokens_used: null,
+      key_suffix: `***${testApiKey.value.slice(-4)}`,
+      error: `请求异常: ${e.message}`,
+    };
+  } finally {
+    testLoading.value = false;
+  }
+};
+
+const saveLLMConfig = async () => {
+  saveLoading.value = true;
+  saveMsg.value = '';
+  try {
+    const token = localStorage.getItem('pdd_admin_token');
+    const res = await fetch('/api/dashboard/llm-config', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        api_key: testApiKey.value.trim(),
+        model: testModel.value,
+      }),
+    });
+    const data = await res.json();
+    saveMsg.value = data.success ? `✅ ${data.msg}` : `❌ ${data.error}`;
+  } catch (e) {
+    saveMsg.value = `❌ 保存失败: ${e.message}`;
+  } finally {
+    saveLoading.value = false;
+    setTimeout(() => { saveMsg.value = ''; }, 5000);
+  }
+};
 
 const requestNotification = () => {
   if ('Notification' in window) {

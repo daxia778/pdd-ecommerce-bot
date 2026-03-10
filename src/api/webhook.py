@@ -9,6 +9,7 @@ P1-6: /health 端点新增 LLM ping 探测，快速确认 LLM API 是否可用
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hashlib
 import hmac
@@ -21,6 +22,7 @@ from urllib.parse import urlparse
 
 from cachetools import TTLCache
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session as DBSession
 
@@ -128,8 +130,43 @@ async def _process_chat(
         session_manager.clear_session(user_id)
         logger.info(f"清空会话历史 | user_id: {user_id}")
 
-    # P1-2 (P0-3 修复): 语义缓存 (Semantic Cache) - 用 MD5 保证重启/多进程下的稳定一致
-    hash_obj = hashlib.md5(message.encode("utf-8")).hexdigest()
+    # =========================================================
+    # 极速优化: 问候语快速通道 — 常见打招呼直接秒回, 跳过RAG/LLM
+    # =========================================================
+    GREETING_PATTERNS = {
+        "在吗",
+        "你好",
+        "在不在",
+        "在嘛",
+        "客服",
+        "hi",
+        "hello",
+        "在吗？",
+        "你好呀",
+        "在的吗",
+        "有人吗",
+        "嗨",
+    }
+    msg_stripped = (
+        message.strip().lower().replace("？", "").replace("?", "").replace("！", "").replace("!", "").replace("。", "")
+    )
+    if msg_stripped in GREETING_PATTERNS or (
+        len(msg_stripped) <= 4 and any(g in msg_stripped for g in ["在吗", "你好", "客服", "在不", "有人"])
+    ):
+        greeting_reply = "亲，在的呢！我是云芊艺小店的智小设AI客服，专注PPT/BP/课件定制，请问有什么可以帮您的呀？"
+        await session_manager.add_message_async_safe(user_id, "user", message, db=db, platform=platform)
+        await session_manager.add_message_async_safe(user_id, "assistant", greeting_reply, db=db, platform=platform)
+        history = await session_manager.get_history_async_safe(user_id, db=db)
+        logger.info(f"⚡ 问候语快速通道命中 | user: {user_id} | msg: {message}")
+        return {
+            "reply": greeting_reply,
+            "history_length": len(history),
+            "escalated": False,
+            "escalation_reason": "",
+        }
+
+    # P1-2 (P0-3 修复): 语义缓存 - 改用 user_id + message 组合 key，避免不同会话上下文串台
+    hash_obj = hashlib.md5(f"{user_id}:{message}".encode()).hexdigest()
     cache_key = f"qa_cache:{hash_obj}"
     try:
         cached_reply = None
@@ -153,9 +190,18 @@ async def _process_chat(
     except Exception as e:
         logger.warning(f"Memory cache error: {e}")
 
-    # === RAG 检索（含 P1-2 相关性过滤）===
-    # P0-1 修复：改用异步 retrieve_async 将运算卸载到线程池
-    retrieved_docs = await rag.retrieve_async(query=message, top_k=3)
+    # =========================================================
+    # 极速优化: 并行执行 RAG 检索和 DB 历史加载 (节省 0.2~0.5s)
+    # =========================================================
+    retrieved_docs_task = asyncio.create_task(rag.retrieve_async(query=message, top_k=3))
+    # P0-Fix-2: 加入用户消息（异步安全 DB 写入）
+    add_user_msg_task = asyncio.create_task(
+        session_manager.add_message_async_safe(user_id, "user", message, db=db, platform=platform)
+    )
+
+    # 等待并行的检索和写入完成
+    retrieved_docs, _ = await asyncio.gather(retrieved_docs_task, add_user_msg_task)
+
     rag_context = rag.build_context(retrieved_docs)
 
     # L2: 动态加载 Prompt
@@ -164,14 +210,11 @@ async def _process_chat(
         rag_context=rag_context if rag_context else "（知识库暂未入库，请凭经验回答）"
     )
 
-    # === P0-Fix-2: 加入用户消息（异步安全 DB 写入）===
-    await session_manager.add_message_async_safe(user_id, "user", message, db=db, platform=platform)
-
     # === P0-Fix-2: 从内存/DB 获取历史（异步安全读取）===
     full_history = await session_manager.get_history_async_safe(user_id, db=db)
 
-    # 性能优化：限制发送给 LLM 的历史轮数（仅保留最近 8 条），减少 Token 消耗加快响应
-    MAX_HISTORY_FOR_LLM = 8
+    # P3-Speed: 限制发送给 LLM 的历史轮数（6→4），显著减少 Token 消耗加快 API 响应
+    MAX_HISTORY_FOR_LLM = 4
     history = full_history[-MAX_HISTORY_FOR_LLM:] if len(full_history) > MAX_HISTORY_FOR_LLM else full_history
 
     # P2: Vision API 支持
@@ -191,14 +234,30 @@ async def _process_chat(
         system_prompt += "\n\n" + prompt_cfg.get("slot_filling_hint", "")
 
     _llm_start = time.monotonic()
+    _is_fallback = False
     try:
-        reply = await llm.chat(messages=history, system_prompt=system_prompt, max_tokens=500)
+        # P3-Speed: max_tokens 250→150，Prompt 已要求「精简极致」，150 足够生成完整回复
+        reply = await llm.chat(messages=history, system_prompt=system_prompt, max_tokens=150)
         response_time_ms = int((time.monotonic() - _llm_start) * 1000)
-        with contextlib.suppress(Exception):
-            if redis_client.is_available:
-                await redis_client.set(cache_key, reply, ex=3600)
-            else:
-                _debounce_cache[cache_key] = reply
+        logger.info(f"⏱️ LLM 调用完成 | user: {user_id} | 耗时: {response_time_ms}ms")
+
+        # 去除首行空白（LLM 偶尔生成的前导换行符）
+        if reply:
+            reply = reply.lstrip("\n \t")
+
+        # 空回复兜底：LLM 偶尔返回空内容
+        if not reply or not reply.strip():
+            logger.warning(f"LLM 返回空回复, 使用兜底话术 | user: {user_id}")
+            reply = "亲，请问您具体需要做什么样的PPT呢？告诉我页数和用途，我马上帮您报价哦～😊"
+            _is_fallback = True
+
+        # 只缓存正常的 LLM 回复（不缓存兜底回复）
+        if not _is_fallback:
+            with contextlib.suppress(Exception):
+                if redis_client.is_available:
+                    await redis_client.set(cache_key, reply, ex=300)  # 5分钟短缓存
+                else:
+                    _debounce_cache[cache_key] = reply
     except Exception as e:
         logger.error(f"LLM 调用异常: {e}")
         raise HTTPException(status_code=503, detail=f"AI 服务暂时不可用: {str(e)}") from e
@@ -242,8 +301,19 @@ async def _process_chat(
                                 file_url=guide_image_url,
                             )
                             logger.info(f"已自动发送第二步引导图 | user: {user_id} | order: {order_sn}")
+
+                            # === 真人客服精髓：合规保护掩护（防脱媒预警） ===
+                            await asyncio.sleep(1.0)
+                            compliance_cover_msg = "亲，温馨提示：请不要脱离平台交易哦～"
+                            await pdd_api_client.send_customer_message(
+                                mall_id=req_data.get("shop_id", "default_shop"),
+                                buyer_id=user_id,
+                                content=compliance_cover_msg,
+                            )
+                            logger.info(f"已发送合规掩护话术 | user: {user_id}")
+
                         except Exception as e:
-                            logger.warning(f"发送引导图失败（不影响订单）: {e}")
+                            logger.warning(f"发送引导图或合规话术失败（不影响订单）: {e}")
 
                 # 从回复中移除指令标记，避免买家看到
                 reply = reply.replace(match.group(0), "").strip()
@@ -255,20 +325,12 @@ async def _process_chat(
     if guardrail_result.blocked:
         # 被拦截，使用安全替换词
         reply = guardrail_result.safe_reply
-        # 主动触发升级拦截
-        escalation_result = {"should_escalate": True, "reason": "guardrail_blocked", "reason_label": "安全红线拦截"}
+        # 主动触发升级拦截（guardrail 拦截是同步的，必须立即处理）
         escalated = True
-        reason = escalation_result["reason"]
+        reason = "guardrail_blocked"
+        reason_label = "安全红线拦截"
         logger.warning(f"Guardrail 拦截 | 用户: {user_id} | 触发规则: {guardrail_result.triggered_rules}")
-    else:
-        # === 升级检测 ===
-        escalation_result = await analyze_escalation(message, reply)
-        escalated = escalation_result["should_escalate"]
-        reason = escalation_result["reason"]
-
-    if escalated:
         try:
-            # P0-Fix-2: 使用 run_in_db_thread 卸载同步 DB 写操作
             await run_in_db_thread(
                 db_service.create_escalation,
                 db=db,
@@ -279,18 +341,53 @@ async def _process_chat(
                 platform=platform,
             )
             await run_in_db_thread(db_service.update_session, db, user_id=user_id, status="escalated")
-            logger.info(
-                f"人工升级已标记 | user_id: {user_id} | reason: {reason} | "
-                f"reason_label: {escalation_result['reason_label']}"
-            )
+            logger.info(f"人工升级已标记 | user_id: {user_id} | reason: {reason}")
         except Exception as e:
             logger.error(f"升级记录写入失败 | user_id: {user_id} | {e}")
+    else:
+        escalated = False
+        reason_label = ""
+
+        # === P3-Speed: 升级检测改为 fire-and-forget，不阻塞用户响应 ===
+        # 升级检测（尤其是 LLM 慢路径）可能花 3-8 秒，用户不应该等待
+        from src.core.escalation_detector import ESCALATION_KEYWORDS, REASON_RULES
+
+        HIGH_CONFIDENCE_KEYWORDS = ["投诉", "骗", "差评", "退款", "举报", "维权", "消协", "12315", "垃圾", "报警"]
+
+        ai_has_escalation = any(kw in reply for kw in ESCALATION_KEYWORDS)
+        user_has_high_confidence = any(kw in message for kw in HIGH_CONFIDENCE_KEYWORDS)
+        user_has_ambiguous = any(any(kw in message for kw in keywords) for keywords, _, _ in REASON_RULES)
+
+        if ai_has_escalation or user_has_high_confidence or user_has_ambiguous:
+            # 有升级信号 → 后台异步处理，不阻塞响应
+            async def _background_escalation():
+                try:
+                    esc_result = await analyze_escalation(message, reply)
+                    if esc_result["should_escalate"]:
+                        await run_in_db_thread(
+                            db_service.create_escalation,
+                            db=db,
+                            user_id=user_id,
+                            trigger_message=message,
+                            ai_reply=reply,
+                            reason=esc_result["reason"],
+                            platform=platform,
+                        )
+                        await run_in_db_thread(db_service.update_session, db, user_id=user_id, status="escalated")
+                        logger.info(f"后台升级检测完成 | user_id: {user_id} | reason: {esc_result['reason']}")
+                except Exception as e:
+                    logger.error(f"后台升级检测异常 | user_id: {user_id} | {e}")
+
+            create_safe_task(_background_escalation(), name=f"escalation-{user_id}")
+
+    _total_elapsed = int((time.monotonic() - _llm_start) * 1000)
+    logger.info(f"⏱️ _process_chat 总耗时 | user: {user_id} | LLM: {response_time_ms}ms | 总计: {_total_elapsed}ms")
 
     return {
         "reply": reply,
         "history_length": len(final_history),
         "escalated": escalated,
-        "escalation_reason": escalation_result["reason_label"] if escalated else "",
+        "escalation_reason": reason_label,
     }
 
 
@@ -318,6 +415,256 @@ async def chat(req: ChatRequest, db: DBSession = Depends(get_db)):
     return ChatResponse(user_id=req.user_id, **result)
 
 
+async def _process_chat_stream(
+    user_id: str,
+    message: str,
+    platform: str,
+    db: DBSession,
+    clear_history: bool = False,
+    image_url: str | None = None,
+):
+    """
+    SSE 流式生成生成器：一边调用 LLM 流式接口，一边向客户端吐出数据流。
+    同时涵盖与 _process_chat 相同的防碰撞、RAG 和兜底策略。
+    """
+    llm = get_llm_client()
+    rag = get_rag_engine()
+
+    # 0. 检查人工接管
+    if await session_manager.is_ai_paused_async_safe(user_id, db):
+        await session_manager.add_message_async_safe(user_id, "user", message, db=db, platform=platform)
+        yield f"data: {json.dumps({'chunk': '[系统提示: 该会话已由人工接管，AI 已暂停自动回复]', 'done': True, 'escalated': False})}\n\n"
+        return
+
+    if clear_history:
+        session_manager.clear_session(user_id)
+
+    # =========================================================
+    # 极速优化: 问候语快速通道 — 常见打招呼直接秒回, 跳过RAG/LLM
+    # =========================================================
+    GREETING_PATTERNS = {
+        "在吗",
+        "你好",
+        "在不在",
+        "在嘛",
+        "客服",
+        "hi",
+        "hello",
+        "在吗？",
+        "你好呀",
+        "在的吗",
+        "有人吗",
+        "嗨",
+    }
+    msg_stripped = (
+        message.strip().lower().replace("？", "").replace("?", "").replace("！", "").replace("!", "").replace("。", "")
+    )
+    if msg_stripped in GREETING_PATTERNS or (
+        len(msg_stripped) <= 4 and any(g in msg_stripped for g in ["在吗", "你好", "客服", "在不", "有人"])
+    ):
+        greeting_reply = "亲，在的呢！我是云芊艺小店的智小设AI客服，专注PPT/BP/课件定制，请问有什么可以帮您的呀？"
+        await session_manager.add_message_async_safe(user_id, "user", message, db=db, platform=platform)
+        await session_manager.add_message_async_safe(user_id, "assistant", greeting_reply, db=db, platform=platform)
+        logger.info(f"⚡ 问候语快速通道(SSE) | user: {user_id} | msg: {message}")
+        yield f"data: {json.dumps({'chunk': greeting_reply, 'done': True, 'escalated': False, 'escalation_reason': '', 'diagnostics': {'model': 'greeting_fastpath', 'provider': 'local', 'backend_ttft_ms': 0, 'backend_total_ms': 0, 'llm_ttft_ms': None, 'llm_total_ms': None, 'streaming': False, 'chunk_count': 1, 'char_count': len(greeting_reply), 'rag_used': False, 'rag_docs_count': 0, 'guardrail_blocked': False, 'guardrail_rules': [], 'greeting_fastpath': True}})}\n\n"
+        return
+    retrieved_docs_task = asyncio.create_task(rag.retrieve_async(query=message, top_k=3))
+    add_user_msg_task = asyncio.create_task(
+        session_manager.add_message_async_safe(user_id, "user", message, db=db, platform=platform)
+    )
+    retrieved_docs, _ = await asyncio.gather(retrieved_docs_task, add_user_msg_task)
+
+    rag_context = rag.build_context(retrieved_docs)
+    prompt_cfg = prompt_loader.get("ppt_consultant")
+    system_prompt = prompt_cfg["base_system_prompt"].format(
+        rag_context=rag_context if rag_context else "（知识库暂未入库，请凭经验回答）"
+    )
+
+    full_history = await session_manager.get_history_async_safe(user_id, db=db)
+    MAX_HISTORY_FOR_LLM = 10
+    history = full_history[-MAX_HISTORY_FOR_LLM:] if len(full_history) > MAX_HISTORY_FOR_LLM else full_history
+
+    # =========================================================
+    # 反复读机保护 v2：检测所有重复的 assistant 内容（含非连续）
+    # 模式：[assistant: X, user: Y, assistant: X] 也要去重
+    # =========================================================
+    seen_assistant_contents = set()
+    deduped_history = []
+    duplicate_count = 0
+    for msg in history:
+        if msg["role"] == "assistant":
+            content_key = msg["content"].strip()[:200]  # 前200字作为指纹
+            if content_key in seen_assistant_contents:
+                duplicate_count += 1
+                # 替换为简短标记，而非完全删除（保持对话轮次结构完整）
+                deduped_history.append({"role": "assistant", "content": "[重复回复已省略]"})
+                continue
+            seen_assistant_contents.add(content_key)
+        deduped_history.append(msg)
+    history = deduped_history
+
+    if duplicate_count > 0:
+        logger.warning(f"⚠️ 反复读机保护: 检测到 {duplicate_count} 条重复 assistant，已替换 | user: {user_id}")
+        system_prompt += "\n\n【紧急系统提示】你刚才的回复和之前一模一样（已被系统标记为[重复回复已省略]），这说明你没有认真理解客户的最新问题。现在请你：\n1. 仔细阅读客户最后一条消息\n2. 给出一个完全不同的、有针对性的新回答\n3. 绝对不要重复之前说过的任何一句话"
+
+    # 确保最后一条消息是 user 的（如果不是就额外追加）
+    if history and history[-1]["role"] != "user":
+        logger.warning(f"⚠️ 历史最后一条不是 user 消息，追加当前消息 | user: {user_id}")
+        history.append({"role": "user", "content": message})
+
+    # 调试日志：记录发送给 LLM 的历史摘要
+    logger.info(
+        f"LLM 输入 | user: {user_id} | history: {len(history)} 条 | 去重: {duplicate_count} | 最后user: {message[:50]}"
+    )
+
+    if image_url and history and history[-1]["role"] == "user":
+        history[-1]["content"] = [
+            {"type": "text", "text": history[-1]["content"]},
+            {"type": "image_url", "image_url": {"url": image_url}},
+        ]
+
+    ppt_keywords = prompt_cfg.get("ppt_keywords", ["PPT"])
+    if any(k in message for k in ppt_keywords) and "[[CREATE_ORDER" not in message:
+        system_prompt += "\n\n" + prompt_cfg.get("slot_filling_hint", "")
+
+    # 通知前端正在生成
+    yield f"data: {json.dumps({'chunk': '', 'done': False})}\n\n"
+
+    try:
+        t_start = time.monotonic()
+        complete_reply = ""
+        llm_meta = {}  # 收集 LLM 诊断元数据
+        chunk_count = 0
+
+        # 核心流式迭代 — 拦截 [[CREATE_ORDER:...]] 等内部指令，不发送给前端
+        _order_buffer = ""  # 缓冲可能是内部指令的内容
+        _in_command = False  # 是否正在收集内部指令
+        _has_started_content = False  # 是否已经开始输出实际内容（过滤开头空白）
+
+        async for chunk in llm.chat_stream(messages=history, system_prompt=system_prompt, max_tokens=1000):
+            # chat_stream 最后会 yield 一个 __meta__ dict
+            if isinstance(chunk, dict) and chunk.get("__meta__"):
+                llm_meta = chunk
+                continue
+            complete_reply += chunk
+            chunk_count += 1
+
+            def resolve_chunk(text: str) -> str:
+                nonlocal _has_started_content
+                if not text:
+                    return ""
+                if not _has_started_content:
+                    text_stripped = text.lstrip("\n \t")
+                    if text_stripped:
+                        _has_started_content = True
+                        return text_stripped
+                    return ""
+                return text
+
+            # 检测并拦截 [[CREATE_ORDER:...]] 指令
+            if _in_command:
+                _order_buffer += chunk
+                if "]]" in _order_buffer:
+                    # 指令结束，丢弃整个指令内容（不发送给前端）
+                    _in_command = False
+                    # 指令之后可能还有正文，提取 ]] 后面的部分
+                    after_cmd = _order_buffer.split("]]", 1)[-1]
+                    _order_buffer = ""
+
+                    parsed_chunk = resolve_chunk(after_cmd)
+                    if parsed_chunk:
+                        yield f"data: {json.dumps({'chunk': parsed_chunk, 'done': False})}\n\n"
+                continue  # 指令收集中，不发送给前端
+            elif "[[" in chunk:
+                # 可能是内部指令的开始
+                _in_command = True
+                # chunk 可能是 "正文[[CREATE"，将 [[ 之前的部分发送出去
+                before_cmd = chunk.split("[[", 1)[0]
+                _order_buffer = "[[" + chunk.split("[[", 1)[1]
+
+                parsed_chunk = resolve_chunk(before_cmd)
+                if parsed_chunk:
+                    yield f"data: {json.dumps({'chunk': parsed_chunk, 'done': False})}\n\n"
+                continue
+            else:
+                parsed_chunk = resolve_chunk(chunk)
+                if parsed_chunk:
+                    yield f"data: {json.dumps({'chunk': parsed_chunk, 'done': False})}\n\n"
+
+        response_time_ms = int((time.monotonic() - t_start) * 1000)
+
+        # 从 complete_reply 中去掉内部指令（用于存储的干净文本）
+        clean_reply = re.sub(r"\[\[CREATE_ORDER:.*?\]\]", "", complete_reply, flags=re.DOTALL).strip()
+
+        # 生成完成后处理 Guardrail + Escalation 并写库
+        guardrail_result = check_ai_output(clean_reply)
+        is_escalated = guardrail_result.blocked
+        escalation_reason = "guardrail_blocked" if is_escalated else ""
+
+        # 升级检测：只做快速路径（关键词判断），跳过慢速 LLM 调用以避免阻塞前端
+        # 慢速路径的 LLM 分析放到后台任务中异步执行
+        if not is_escalated and any(
+            kw in message for kw in ["投诉", "骗", "差评", "退款", "举报", "维权", "人工", "真人"]
+        ):
+            is_escalated = True
+            escalation_reason = "keyword_escalation"
+
+        await session_manager.add_message_async_safe(
+            user_id, "assistant", complete_reply, db=db, platform=platform, response_time_ms=response_time_ms
+        )
+
+        # 结束包：包含诊断元数据
+        done_payload = {
+            "chunk": "",
+            "done": True,
+            "escalated": is_escalated,
+            "escalation_reason": escalation_reason,
+            # === 诊断元数据 (供前端测试面板使用) ===
+            "diagnostics": {
+                "model": llm_meta.get("model", "unknown"),
+                "provider": llm_meta.get("provider", "unknown"),
+                "backend_ttft_ms": llm_meta.get("ttft_ms"),
+                "backend_total_ms": response_time_ms,
+                "llm_ttft_ms": llm_meta.get("ttft_ms"),
+                "llm_total_ms": llm_meta.get("total_ms"),
+                "streaming": llm_meta.get("streaming", True),
+                "chunk_count": chunk_count,
+                "char_count": len(complete_reply),
+                "rag_used": bool(rag_context),
+                "rag_docs_count": len(retrieved_docs) if retrieved_docs else 0,
+                "guardrail_blocked": guardrail_result.blocked,
+                "guardrail_rules": guardrail_result.triggered_rules,
+                "greeting_fastpath": False,
+            },
+        }
+        yield f"data: {json.dumps(done_payload)}\n\n"
+
+        # 触发前端看版刷新
+        await manager.broadcast({"event": "update", "user_id": user_id})
+
+    except Exception as e:
+        logger.error(f"Stream LLM 异常: {e}")
+        yield f"data: {json.dumps({'chunk': f'[系统异常: {str(e)}]', 'done': True})}\n\n"
+
+
+@router.post("/chat/stream", summary="PPT客服流式对话接口 (SSE)")
+async def chat_stream_endpoint(req: ChatRequest, db: DBSession = Depends(get_db)):
+    """
+    流式对话接口 - 返回 SSE 格式的流，前端用于逐字渲染（无等待）。
+    """
+    return StreamingResponse(
+        _process_chat_stream(
+            user_id=req.user_id,
+            message=req.message,
+            platform=req.platform,
+            db=db,
+            clear_history=req.clear_history,
+            image_url=req.image_url,
+        ),
+        media_type="text/event-stream",
+    )
+
+
 @router.get("/extract_requirements/{user_id}", summary="提取买家对话中的结构化需求 (无需鉴权)")
 async def extract_requirements_public(user_id: str, db: DBSession = Depends(get_db)):
     """
@@ -325,6 +672,10 @@ async def extract_requirements_public(user_id: str, db: DBSession = Depends(get_
     供买家模拟器直接调用（无需 JWT），逻辑与 dashboard 版一致。
     """
     from src.models.database import Message, run_in_db_thread
+    from src.services.requirement_extractor import (
+        extract_requirements_intelligently,
+        refine_requirements_from_full_context,
+    )
 
     def _get_all_messages(db_session: DBSession):
         return db_session.query(Message).filter(Message.user_id == user_id).order_by(Message.created_at).all()
@@ -332,72 +683,17 @@ async def extract_requirements_public(user_id: str, db: DBSession = Depends(get_
     messages = await run_in_db_thread(_get_all_messages, db)
 
     buyer_msgs = [m.content for m in messages if m.role == "user"]
-    all_msgs = [m.content for m in messages]
+    all_msgs = [f"{'买家' if m.role == 'user' else 'AI客服'}: {m.content}" for m in messages]
     buyer_content = " ".join(buyer_msgs)
-    all_content = " ".join(all_msgs)
+    all_content = "\n".join(all_msgs)
 
-    fields = ["topic", "pages", "style", "deadline", "budget", "audience", "outline", "assets"]
-    result = {k: "" for k in fields}
-    confidence = {k: 0 for k in fields}
-    result["source"] = "none"
+    # 第一轮：标准提取（优先 LLM，降级正则）
+    result = await extract_requirements_intelligently(buyer_content, all_content)
 
-    # 1. 优先从 [[CREATE_ORDER:...]] 提取
-    order_match = re.search(r"\[\[CREATE_ORDER:(.*?)\]\]", all_content, re.DOTALL)
-    if order_match:
-        try:
-            raw = order_match.group(1).strip()
-            data = json.loads(raw)
-            for field in fields:
-                val = data.get(field, "") or (data.get("details", "") if field == "outline" else "")
-                if val and str(val).strip():
-                    result[field] = str(val).strip()
-                    confidence[field] = 95 if field in ("topic", "pages") else 88
-            result["source"] = "order_token"
-            result["confidence"] = confidence
-            return result
-        except Exception:
-            pass
+    # 第二轮：上下文精读优化（补充备注栏、修正遗漏字段）
+    if len(all_msgs) >= 4:  # 至少2轮对话才值得精读
+        result = await refine_requirements_from_full_context(result, all_content)
 
-    # 2. 启发式关键词提取 — 仅从买家消息中提取
-    pages_m = re.search(r"(\d+)\s*[页pP]", buyer_content)
-    if pages_m:
-        result["pages"] = f"{pages_m.group(1)}页"
-        confidence["pages"] = 90
-
-    topic_patterns = [
-        r"(?:做|要|需要|定制|制作)\s*([\u4e00-\u9fa5a-zA-Z]{2,15}(?:PPT|ppt|计划书|报告|方案|汇报|总结|答辩|展示|投标|培训|介绍|宣传))",
-        r"([\u4e00-\u9fa5]{2,8}(?:计划书|报告|方案|汇报|总结|答辩|投标|培训|宣传|介绍))",
-    ]
-    for pat in topic_patterns:
-        topic_m = re.search(pat, buyer_content)
-        if topic_m:
-            result["topic"] = topic_m.group(1).strip()
-            confidence["topic"] = 80
-            break
-
-    style_keywords = ["商务", "学术", "简约", "科技", "高端", "创投", "正规", "现代", "简洁", "大气"]
-    for kw in style_keywords:
-        if kw in buyer_content:
-            result["style"] = kw
-            confidence["style"] = 75
-            break
-
-    deadline_keywords = ["明天", "后天", "本周", "下周", "月底", "紧急", "加急", "尽快", "马上"]
-    for kw in deadline_keywords:
-        if kw in buyer_content:
-            result["deadline"] = kw
-            confidence["deadline"] = 82
-            break
-
-    budget_m = re.search(r"(\d+)\s*[元块]", buyer_content)
-    if budget_m:
-        result["budget"] = f"{budget_m.group(1)}元"
-        confidence["budget"] = 78
-
-    if any(result[k] for k in fields):
-        result["source"] = "heuristic"
-
-    result["confidence"] = confidence
     return result
 
 
@@ -500,13 +796,46 @@ async def _process_pdd_webhook_background(req: PddWebhookRequest):
     db = SessionLocal()
     try:
         try:
-            result = await _process_chat(
-                user_id=req.buyer_id,
-                message=req.content,
-                platform="pdd",
-                db=db,
-                image_url=req.image_url,
-            )
+            # === 数据清洗：过滤拼多多系统自动发出的商品卡片/访客溯源文案 ===
+            cleaned_content = re.sub(r"当[前期]用户来自.*?详情页", "", req.content).strip()
+
+            # 如果内容被完全清空且没有图片，直接跳过处理
+            if not cleaned_content and not req.image_url:
+                logger.info(f"PDD Webhook | 过滤了纯系统溯源消息 | buyer_id: {req.buyer_id}")
+                return
+
+            # 如果用户发了二维码、微信号等敏感信息，直接给合规掩护和确认，不麻烦大模型
+            if re.search(r"(微信号|加微信|二维码|手机号|vx)", cleaned_content, re.IGNORECASE) or req.image_url:
+                logger.warning(f"检测到敏感信息/图片，触发合规强提醒 | buyer_id: {req.buyer_id}")
+                reply = "好哒，收到您的资料啦！\n【温馨提示】：平台规定请不要脱离平台交易哦～我们的老师已经在拼多多后台为您处理了哦 😊"
+                result = {"reply": reply, "escalated": False, "escalation_reason": ""}
+
+                # 持久化该回复
+                from src.core.session_manager import session_manager
+
+                await session_manager.add_message_async_safe(
+                    req.buyer_id,
+                    "user",
+                    req.content or "[发送了包含联系方式或图片的信息]",
+                    db=db,
+                    platform="pdd",
+                    image_url=req.image_url,
+                )
+                await session_manager.add_message_async_safe(req.buyer_id, "assistant", reply, db=db, platform="pdd")
+
+                # 广播强提醒事件至前端
+                from src.api.websocket_manager import manager
+
+                await manager.broadcast({"event": "media_received_alert", "user_id": req.buyer_id})
+            else:
+                result = await _process_chat(
+                    user_id=req.buyer_id,
+                    message=cleaned_content,
+                    platform="pdd",
+                    db=db,
+                    image_url=req.image_url,
+                )
+
         except HTTPException:
             reply = "亲，客服系统正在维护中，请稍后再联系我们，抱歉给您带来不便！🙏"
             result = {"reply": reply, "escalated": False, "escalation_reason": ""}

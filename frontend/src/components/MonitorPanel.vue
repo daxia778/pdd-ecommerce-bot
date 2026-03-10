@@ -189,6 +189,22 @@
             </div>
             <p class="font-bold text-gray-400 text-sm mb-1">选择一个对话</p>
             <p class="text-xs text-gray-300 text-center leading-relaxed">从左侧列表点选买家会话<br/>查看实时对话记录</p>
+
+            <!-- 快捷统计 -->
+            <div class="mt-8 grid grid-cols-3 gap-3 w-full max-w-xs">
+              <div class="bg-blue-50/50 rounded-xl p-3 text-center border border-blue-100/50">
+                <p class="text-lg font-black text-blue-600">{{ store.sessions?.length || 0 }}</p>
+                <p class="text-[10px] text-blue-400 font-bold mt-0.5">活跃会话</p>
+              </div>
+              <div class="bg-amber-50/50 rounded-xl p-3 text-center border border-amber-100/50">
+                <p class="text-lg font-black text-amber-600">{{ store.escalations?.length || 0 }}</p>
+                <p class="text-[10px] text-amber-400 font-bold mt-0.5">待处理</p>
+              </div>
+              <div class="bg-emerald-50/50 rounded-xl p-3 text-center border border-emerald-100/50">
+                <p class="text-lg font-black text-emerald-600">{{ store.stats?.ai_resolution_rate || '—' }}</p>
+                <p class="text-[10px] text-emerald-400 font-bold mt-0.5">AI解决率</p>
+              </div>
+            </div>
           </div>
 
           <template v-for="(msg, index) in store.currentChat" :key="index">

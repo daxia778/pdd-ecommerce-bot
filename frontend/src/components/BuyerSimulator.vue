@@ -1,7 +1,7 @@
 <template>
   <div class="h-full flex gap-4 p-4 overflow-hidden">
     <!-- Left: Mobile Phone Container -->
-    <div class="w-full lg:w-[400px] h-[750px] max-h-full bg-white rounded-[2.5rem] shadow-2xl border-[8px] border-gray-900 overflow-hidden flex flex-col relative ring-4 ring-gray-200 shrink-0 mx-auto">
+    <div class="w-full lg:w-[380px] h-[750px] max-h-full bg-white rounded-[2.5rem] shadow-2xl border-[8px] border-gray-900 overflow-hidden flex flex-col relative ring-4 ring-gray-200 shrink-0 mx-auto lg:mx-0">
 
       <!-- Dynamic Island Notch -->
       <div class="h-8 w-full absolute top-0 z-30 flex justify-center pointer-events-none mt-2">
@@ -21,7 +21,7 @@
             </div>
             <div>
               <h2 class="font-extrabold text-[#E02E24] text-lg leading-tight">拼多多商家客服</h2>
-              <p class="text-[10px] text-gray-500 font-medium">PDD AI 金牌定制中心</p>
+              <p class="text-[10px] text-gray-500 font-medium">云芊艺小店 · 智小设AI客服</p>
             </div>
         </div>
         <div class="flex items-center gap-2">
@@ -36,7 +36,7 @@
         <div class="flex items-start gap-2 max-w-[85%]">
             <div class="w-8 h-8 rounded-full bg-gradient-to-br from-[#FF574D] to-[#E02E24] flex items-center justify-center flex-shrink-0 shadow-sm text-white font-bold text-xs mt-1">小设</div>
             <div class="bg-white p-3 rounded-2xl rounded-tl-sm shadow-sm border border-gray-100 relative">
-                <p class="text-[13px] text-gray-800 leading-relaxed font-medium">亲亲在的呢！我是金牌设计顾问小设，请问有什么可以帮您的呀？😊</p>
+                <p class="text-[13px] text-gray-800 leading-relaxed font-medium">亲，在的呢！我是云芊艺小店的智小设AI客服，专注PPT/BP/课件定制，请问有什么可以帮您的呀？</p>
             </div>
         </div>
 
@@ -69,14 +69,18 @@
             </div>
 
             <!-- Metadata (Latency) -->
-            <div v-if="msg.latency && !msg.isTyping" class="mt-1 flex items-center gap-1 text-[9px] text-gray-400 font-medium" :class="msg.role === 'user' ? 'mr-10' : 'ml-10'">
+            <div v-if="msg.latency && !msg.isTyping" class="mt-1 flex items-center gap-1 text-[9px] font-medium"
+                 :class="[
+                     msg.role === 'user' ? 'mr-10' : 'ml-10',
+                     msg.latency <= 3000 ? 'text-green-500' : (msg.latency <= 8000 ? 'text-orange-400' : 'text-red-500')
+                 ]">
                 <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                 后端耗时: {{ msg.latency }}ms
             </div>
         </div>
 
-        <!-- Waiting Indicator -->
-        <div v-if="loading && !isTypingRender" class="flex justify-start items-center gap-2 max-w-[85%]">
+        <!-- Waiting Indicator: only show before AI message bubble is created -->
+        <div v-if="loading && !messages.some(m => m.isTyping)" class="flex justify-start items-center gap-2 max-w-[85%]">
              <div class="w-8 h-8 rounded-full bg-gradient-to-br from-[#FF574D] to-[#E02E24] flex items-center justify-center flex-shrink-0 text-white font-bold text-xs mt-1">小设</div>
              <div class="bg-white p-3 rounded-2xl rounded-tl-sm shadow-sm border border-gray-100 flex items-center gap-1 h-10">
                  <span class="text-[11px] font-bold text-gray-400 mr-2">正在输入</span>
@@ -113,8 +117,8 @@
       </div>
     </div>
 
-    <!-- Right: Extracted Requirements Pane + Concurrent Testing -->
-    <div class="hidden lg:flex flex-col w-[350px] gap-4 shrink-0 h-full overflow-hidden">
+    <!-- Middle: Extracted Requirements Pane + Concurrent Testing -->
+    <div class="hidden lg:flex flex-col w-[300px] gap-4 shrink-0 h-full overflow-hidden">
 
       <!-- Concurrent Test Panel -->
       <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 shrink-0">
@@ -198,6 +202,7 @@
                    <EditableField label="预算要求" v-model="localReqData.budget" :confidence="getConfidence('budget')" fieldKey="budget"/>
                  </div>
                  <EditableField label="用途/受众" v-model="localReqData.audience" :confidence="getConfidence('audience')" fieldKey="audience"/>
+                 <EditableField label="📝 备注" v-model="localReqData.notes" :confidence="getConfidence('notes')" fieldKey="notes"/>
                </div>
             </div>
 
@@ -214,6 +219,11 @@
         </div>
       </div>
     </div>
+
+    <!-- Right: Diagnostics Panel -->
+    <div class="hidden xl:flex flex-col flex-1 min-w-[280px] h-full overflow-hidden">
+      <DiagnosticsPanel ref="diagnosticsPanel" />
+    </div>
   </div>
 </template>
 
@@ -221,8 +231,10 @@
 import { ref, onMounted, nextTick, reactive, computed } from 'vue';
 import { store } from '../store.js';
 import EditableField from './EditableField.vue';
+import DiagnosticsPanel from './DiagnosticsPanel.vue';
 
 // ========== 1. 对话与流式渲染 ==========
+const diagnosticsPanel = ref(null);
 const inputMsg = ref('');
 const messages = ref([]);
 const loading = ref(false);
@@ -261,35 +273,13 @@ const clearChat = () => {
     }).catch(e => console.error(e));
 };
 
-// 流式打字机效果
-const typeWriterEffect = async (msgObj, text) => {
-    isTypingRender.value = true;
-    msgObj.isTyping = true;
-    msgObj.displayContent = '';
-
-    // 按字切分，根据标点符号增加随机延迟
-    const chars = Array.from(text);
-    for (let i = 0; i < chars.length; i++) {
-        msgObj.displayContent += chars[i];
-
-        let delay = 15; // 极快流式
-        if (['，', '。', '！', '？', '\n'].includes(chars[i])) delay = 150;
-
-        scrollToBottom();
-        await new Promise(r => setTimeout(r, delay));
-    }
-
-    msgObj.isTyping = false;
-    isTypingRender.value = false;
-    scrollToBottom();
-
-    // 收到新消息并且打字完成后，静默触发需求提取
-    triggerExtraction(true);
-};
+// 移除假动画 typeWriterEffect，保留基于真实 SSE 流输出的逻辑
 
 const sendMessage = async () => {
     const text = inputMsg.value.trim();
     if (!text || loading.value || isTypingRender.value) return;
+
+    const currentUserMessage = text;  // 保存用于诊断日志
 
     // User MSG
     messages.value.push({ role: 'user', content: text });
@@ -299,8 +289,22 @@ const sendMessage = async () => {
     loading.value = true;
     const startTime = performance.now();
 
+    // 预先插入 AI 回复的空白占位泡泡
+    const aiMsg = reactive({
+        role: 'assistant',
+        content: '',
+        displayContent: '',
+        escalated: false,
+        escalation_reason: '',
+        latency: null,
+        isTyping: true,
+        error: false
+    });
+    messages.value.push(aiMsg);
+    scrollToBottom();
+
     try {
-        const response = await fetch('/api/v1/chat', {
+        const response = await fetch('/api/v1/chat/stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -310,39 +314,98 @@ const sendMessage = async () => {
             })
         });
 
-        const data = await response.json();
-        const latency = Math.round(performance.now() - startTime);
+        if (!response.ok) {
+            let errorText = '未知错误';
+            try {
+                const errData = await response.json();
+                errorText = errData.detail || errData.message || errorText;
+            } catch (e) { }
+            aiMsg.content = '请求失败：' + errorText;
+            aiMsg.displayContent = aiMsg.content;
+            aiMsg.error = true;
+            aiMsg.isTyping = false;
+            loading.value = false;
+            return;
+        }
 
-        if (response.ok) {
-            const aiMsg = {
-                role: 'assistant',
-                content: data.reply,
-                displayContent: '',
-                escalated: data.escalated,
-                escalation_reason: data.escalation_reason,
-                latency: latency,
-                isTyping: false
-            };
-            messages.value.push(aiMsg);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let done = false;
+        let isFirstChunk = true;
 
-            // 触发流式渲染
-            await typeWriterEffect(aiMsg, data.reply);
+        while (!done) {
+            const { value, done: readerDone } = await reader.read();
+            done = readerDone;
+            if (value) {
+                const chunkStr = decoder.decode(value, { stream: !done });
+                const lines = chunkStr.split('\n');
 
-        } else {
-            messages.value.push({
-                role: 'system',
-                content: '请求失败：' + (data.detail || data.message || '未知错误'),
-                error: true
-            });
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const dataStr = line.slice(6).trim();
+                        if (!dataStr) continue;
+
+                        try {
+                            const data = JSON.parse(dataStr);
+
+                            // 首次收到数据（包括空的 heartbeat），停止 loading
+                            if (isFirstChunk) {
+                                loading.value = false;
+                                isFirstChunk = false;
+                            }
+
+                            // 有实际内容，追加显示
+                            if (data.chunk) {
+                                if (!aiMsg.latency) {
+                                    aiMsg.latency = Math.round(performance.now() - startTime);
+                                }
+                                aiMsg.displayContent += data.chunk;
+                                scrollToBottom();
+                            }
+
+                            if (data.done) {
+                                aiMsg.isTyping = false;
+                                aiMsg.escalated = data.escalated || false;
+                                aiMsg.escalation_reason = data.escalation_reason || '';
+                                aiMsg.content = aiMsg.displayContent;
+                                if (!aiMsg.latency) {
+                                    aiMsg.latency = Math.round(performance.now() - startTime);
+                                }
+                                // 记录诊断日志
+                                diagnosticsPanel.value?.addLog({
+                                    userMessage: currentUserMessage,
+                                    frontendTTFT: aiMsg.latency,
+                                    d: data.diagnostics || null,
+                                    escalated: data.escalated || false,
+                                    error: false,
+                                });
+                                // 对话结束触发提取
+                                triggerExtraction(true);
+                            }
+                        } catch (e) {
+                            console.error('SSE JSON parse error:', e, dataStr);
+                        }
+                    }
+                }
+            }
         }
     } catch (error) {
-        messages.value.push({
-            role: 'system',
-            content: '连接超时或服务器异常。',
-            error: true
+        aiMsg.content = '连接超时或服务器异常。';
+        aiMsg.displayContent = aiMsg.content;
+        aiMsg.error = true;
+        aiMsg.isTyping = false;
+        // 记录错误诊断日志
+        diagnosticsPanel.value?.addLog({
+            userMessage: currentUserMessage,
+            frontendTTFT: null,
+            d: null,
+            escalated: false,
+            error: true,
+            errorMessage: error?.message || '连接超时或服务器异常',
         });
     } finally {
         loading.value = false;
+        aiMsg.isTyping = false;
         scrollToBottom();
     }
 };
@@ -350,7 +413,7 @@ const sendMessage = async () => {
 // ========== 2. 结构化需求提取 ==========
 const isExtracting = ref(false);
 const localReqData = reactive({
-  topic: '', pages: '', style: '', deadline: '', budget: '', audience: '', outline: ''
+  topic: '', pages: '', style: '', deadline: '', budget: '', audience: '', outline: '', notes: ''
 });
 const fieldConfidence = reactive({});
 
@@ -358,7 +421,7 @@ const getConfidence = (key) => fieldConfidence[key] || 0;
 
 const completionRate = computed(() => {
   let filled = 0;
-  const fields = ['topic', 'pages', 'style', 'deadline', 'budget', 'audience', 'outline'];
+  const fields = ['topic', 'pages', 'style', 'deadline', 'budget', 'audience', 'outline', 'notes'];
   fields.forEach(f => {
     if (localReqData[f] && localReqData[f] !== '-') filled++;
   });
@@ -375,7 +438,7 @@ const triggerExtraction = async (silent = false) => {
 
         if (data && data.source !== 'none') {
             // 更新需求数据
-            const fields = ['topic', 'pages', 'style', 'deadline', 'budget', 'audience', 'outline'];
+            const fields = ['topic', 'pages', 'style', 'deadline', 'budget', 'audience', 'outline', 'notes'];
             fields.forEach(k => {
                 if (data[k]) localReqData[k] = data[k];
             });
@@ -422,6 +485,11 @@ const runConcurrentTest = async () => {
     const promises = queries.map(async (msg, idx) => {
         const uid = `LoadUser_${idx + 1}`;
         const start = performance.now();
+
+        // Setup abort controller for timeout and prevent hanging the UI infinitely
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s max per request
+
         try {
             const res = await fetch('/api/v1/chat', {
                 method: 'POST',
@@ -430,15 +498,19 @@ const runConcurrentTest = async () => {
                     user_id: uid,
                     message: msg,
                     platform: 'simulator'
-                })
+                }),
+                signal: controller.signal
             });
+            clearTimeout(timeoutId);
             const latency = Math.round(performance.now() - start);
             testResults.value[idx].pending = false;
             testResults.value[idx].latency = latency;
             testResults.value[idx].success = res.ok;
         } catch (err) {
+            clearTimeout(timeoutId);
             testResults.value[idx].pending = false;
             testResults.value[idx].success = false;
+            console.error(`Concurrent Load Test Error (User ${idx + 1}):`, err);
         }
     });
 
