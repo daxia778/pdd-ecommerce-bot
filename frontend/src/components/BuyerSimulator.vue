@@ -21,7 +21,7 @@
             </div>
             <div>
               <h2 class="font-extrabold text-[#E02E24] text-lg leading-tight">拼多多商家客服</h2>
-              <p class="text-[10px] text-gray-500 font-medium">PDD AI 金牌定制中心</p>
+              <p class="text-[10px] text-gray-500 font-medium">云芊艺小店 · 智小设AI客服</p>
             </div>
         </div>
         <div class="flex items-center gap-2">
@@ -36,7 +36,7 @@
         <div class="flex items-start gap-2 max-w-[85%]">
             <div class="w-8 h-8 rounded-full bg-gradient-to-br from-[#FF574D] to-[#E02E24] flex items-center justify-center flex-shrink-0 shadow-sm text-white font-bold text-xs mt-1">小设</div>
             <div class="bg-white p-3 rounded-2xl rounded-tl-sm shadow-sm border border-gray-100 relative">
-                <p class="text-[13px] text-gray-800 leading-relaxed font-medium">亲亲在的呢！我是金牌设计顾问小设，请问有什么可以帮您的呀？😊</p>
+                <p class="text-[13px] text-gray-800 leading-relaxed font-medium">亲，在的呢！我是云芊艺小店的智小设AI客服，专注PPT/BP/课件定制，请问有什么可以帮您的呀？</p>
             </div>
         </div>
 
@@ -202,6 +202,7 @@
                    <EditableField label="预算要求" v-model="localReqData.budget" :confidence="getConfidence('budget')" fieldKey="budget"/>
                  </div>
                  <EditableField label="用途/受众" v-model="localReqData.audience" :confidence="getConfidence('audience')" fieldKey="audience"/>
+                 <EditableField label="📝 备注" v-model="localReqData.notes" :confidence="getConfidence('notes')" fieldKey="notes"/>
                </div>
             </div>
 
@@ -412,7 +413,7 @@ const sendMessage = async () => {
 // ========== 2. 结构化需求提取 ==========
 const isExtracting = ref(false);
 const localReqData = reactive({
-  topic: '', pages: '', style: '', deadline: '', budget: '', audience: '', outline: ''
+  topic: '', pages: '', style: '', deadline: '', budget: '', audience: '', outline: '', notes: ''
 });
 const fieldConfidence = reactive({});
 
@@ -420,7 +421,7 @@ const getConfidence = (key) => fieldConfidence[key] || 0;
 
 const completionRate = computed(() => {
   let filled = 0;
-  const fields = ['topic', 'pages', 'style', 'deadline', 'budget', 'audience', 'outline'];
+  const fields = ['topic', 'pages', 'style', 'deadline', 'budget', 'audience', 'outline', 'notes'];
   fields.forEach(f => {
     if (localReqData[f] && localReqData[f] !== '-') filled++;
   });
@@ -437,7 +438,7 @@ const triggerExtraction = async (silent = false) => {
 
         if (data && data.source !== 'none') {
             // 更新需求数据
-            const fields = ['topic', 'pages', 'style', 'deadline', 'budget', 'audience', 'outline'];
+            const fields = ['topic', 'pages', 'style', 'deadline', 'budget', 'audience', 'outline', 'notes'];
             fields.forEach(k => {
                 if (data[k]) localReqData[k] = data[k];
             });

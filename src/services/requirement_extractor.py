@@ -12,7 +12,7 @@ async def extract_requirements_intelligently(buyer_content: str, all_content: st
     2. Build prompt with FULL dialog context (so LLM sees buyer request + AI answers).
     3. Instruct LLM clearly to not hallucinate and ignore AI pricing/tier pitches.
     """
-    fields = ["topic", "pages", "style", "deadline", "budget", "audience", "outline", "assets"]
+    fields = ["topic", "pages", "style", "deadline", "budget", "audience", "outline", "assets", "notes"]
     result = {k: "" for k in fields}
     confidence = {k: 0 for k in fields}
     result["source"] = "none"
@@ -59,7 +59,8 @@ JSON必须包含以下结构：
   "deadline": "交稿时间（如'明晚8点前'）",
   "budget": "价格预算（如'200元以内'）",
   "audience": "受众（未提及留空）",
-  "outline": "买家的资料大纲/痛点（绝不能是客服的报价服务项名称！未提及留空）"
+  "outline": "买家的资料大纲/痛点（绝不能是客服的报价服务项名称！未提及留空）",
+  "notes": "其他无法归入上述字段的补充信息（如'有模板文件'、'需要加动画'、'老板要求对齐品牌色'等），未提及留空"
 }"""
 
     try:
@@ -153,3 +154,63 @@ def extract_requirements_heuristically(buyer_content, result, confidence):
 
     result["confidence"] = confidence
     return result
+
+
+async def refine_requirements_from_full_context(current_result: dict, full_conversation: str) -> dict:
+    """
+    二次精读优化：在对话结束或手动刷新时，基于完整上下文重新提取一遍需求，
+    补充或修正之前可能遗漏/错误的字段。
+    """
+    if not full_conversation or len(full_conversation.strip()) < 10:
+        return current_result
+
+    llm = get_llm_client()
+    system_prompt = """你是一名顶级客服需求分析师。请仔细阅读下方完整的客服对话记录，对已有的需求提取结果进行修正和补充。
+
+规则：
+1. 只提取买家本人的真实需求，不要把AI客服的推荐档位当作买家需求。
+2. 如果当前值是正确的，保留不变。如果有更准确的新信息，则更新。
+3. 特别注意 notes（备注）字段：把所有不适合放在其他字段中的有价值信息都摘录进去，例如：
+   "有自己的模板文件"、"需要中英双语"、"老板要求红色主题"、"演讲用需要备注栏"、"内容很简单就排个版"等。
+4. 输出必须是严格的 JSON，且保持所有字段。
+
+当前已提取结果（作为基础，你在此之上修正）：
+""" + json.dumps(
+        {k: v for k, v in current_result.items() if k not in ("confidence", "source")}, ensure_ascii=False, indent=2
+    )
+
+    try:
+        reply = await llm.chat(
+            messages=[
+                {"role": "user", "content": f"完整对话记录如下：\n{full_conversation}\n\n请输出修正后的完整JSON："}
+            ],
+            system_prompt=system_prompt,
+            max_tokens=300,
+            temperature=0.1,
+        )
+
+        json_str = reply.strip()
+        if "```json" in json_str:
+            json_str = json_str.split("```json")[1].split("```")[0].strip()
+        elif "```" in json_str:
+            json_str = json_str.split("```")[1].split("```")[0].strip()
+
+        refined = json.loads(json_str)
+
+        fields = ["topic", "pages", "style", "deadline", "budget", "audience", "outline", "assets", "notes"]
+        for field in fields:
+            val = str(refined.get(field, "")).strip()
+            if val and val not in ("-", "无"):
+                current_result[field] = val
+                if "confidence" in current_result and isinstance(current_result["confidence"], dict):
+                    current_result["confidence"][field] = 92  # 二次精读置信度更高
+
+        current_result["source"] = current_result.get("source", "llm") + "_refined"
+        logger.info(
+            f"📋 二次精读完成 | 结果: {json.dumps({k: v for k, v in current_result.items() if k not in ('confidence',)}, ensure_ascii=False)[:200]}"
+        )
+        return current_result
+
+    except Exception as e:
+        logger.warning(f"二次精读提取失败（保持原结果）: {e}")
+        return current_result

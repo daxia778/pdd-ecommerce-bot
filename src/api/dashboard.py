@@ -815,3 +815,123 @@ async def get_component_config(key: str):
         "file_content": file_content,
         "env_vars": env_values,
     }
+
+
+# ==========================================================================
+# LLM API 接入测试 — 允许管理员手动验证 API Key 可达性
+# ==========================================================================
+
+
+class LLMTestRequest(BaseModel):
+    api_key: str
+    model: str = "glm-4-flash"
+    base_url: str = "https://open.bigmodel.cn/api/paas/v4/"
+
+
+@router.post("/api/dashboard/llm-test")
+async def test_llm_connection(body: LLMTestRequest):
+    """
+    手动测试 LLM API Key 的可达性，返回延迟和模型状态。
+    不会影响生产环境的 LLM Client，仅做一次性探测。
+    """
+    import time
+
+    import litellm
+
+    t_start = time.monotonic()
+    try:
+        response = await litellm.acompletion(
+            model=f"openai/{body.model}",
+            messages=[{"role": "user", "content": "hi"}],
+            api_key=body.api_key,
+            base_url=body.base_url,
+            max_tokens=10,
+            temperature=0.1,
+            timeout=15.0,
+        )
+        elapsed_ms = int((time.monotonic() - t_start) * 1000)
+        reply = response.choices[0].message.content if response.choices else ""
+        model_used = getattr(response, "model", body.model)
+        usage = getattr(response, "usage", None)
+
+        return {
+            "success": True,
+            "latency_ms": elapsed_ms,
+            "model": model_used,
+            "reply": reply,
+            "tokens_used": usage.total_tokens if usage else None,
+            "key_suffix": f"***{body.api_key[-4:]}",
+            "error": None,
+        }
+    except litellm.AuthenticationError as e:
+        elapsed_ms = int((time.monotonic() - t_start) * 1000)
+        return {
+            "success": False,
+            "latency_ms": elapsed_ms,
+            "model": body.model,
+            "reply": None,
+            "tokens_used": None,
+            "key_suffix": f"***{body.api_key[-4:]}",
+            "error": f"鉴权失败 (API Key 无效): {e}",
+        }
+    except Exception as e:
+        elapsed_ms = int((time.monotonic() - t_start) * 1000)
+        return {
+            "success": False,
+            "latency_ms": elapsed_ms,
+            "model": body.model,
+            "reply": None,
+            "tokens_used": None,
+            "key_suffix": f"***{body.api_key[-4:]}",
+            "error": f"{type(e).__name__}: {e}",
+        }
+
+
+class LLMConfigSaveRequest(BaseModel):
+    api_key: str
+    model: str = "glm-4.7"
+
+
+@router.post("/api/dashboard/llm-config")
+async def save_llm_config(body: LLMConfigSaveRequest):
+    """
+    将 API Key 和模型设置保存到 .env 文件，并热重载 LLM 客户端。
+    """
+    import re
+
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    env_path = os.path.join(base_dir, ".env")
+
+    if not os.path.isfile(env_path):
+        return {"success": False, "error": ".env 文件不存在"}
+
+    try:
+        with open(env_path, encoding="utf-8") as f:
+            content = f.read()
+        # 替换 API Key
+        if re.search(r"^ZHIPU_API_KEYS=", content, re.MULTILINE):
+            content = re.sub(r"^ZHIPU_API_KEYS=.*$", f"ZHIPU_API_KEYS={body.api_key}", content, flags=re.MULTILINE)
+        else:
+            content += f"\nZHIPU_API_KEYS={body.api_key}\n"
+
+        # 替换模型
+        if re.search(r"^MAIN_CHAT_MODEL=", content, re.MULTILINE):
+            content = re.sub(r"^MAIN_CHAT_MODEL=.*$", f"MAIN_CHAT_MODEL={body.model}", content, flags=re.MULTILINE)
+        else:
+            content += f"\nMAIN_CHAT_MODEL={body.model}\n"
+
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        # 同步更新运行时环境变量
+        os.environ["ZHIPU_API_KEYS"] = body.api_key
+        os.environ["MAIN_CHAT_MODEL"] = body.model
+
+        logger.info(f"LLM 配置已保存 | model: {body.model} | key: ***{body.api_key[-4:]}")
+        return {
+            "success": True,
+            "msg": f"已保存！模型: {body.model} | Key: ***{body.api_key[-4:]}",
+        }
+    except Exception as e:
+        logger.error(f"保存 LLM 配置失败: {e}")
+        return {"success": False, "error": str(e)}

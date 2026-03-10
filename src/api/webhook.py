@@ -153,7 +153,7 @@ async def _process_chat(
     if msg_stripped in GREETING_PATTERNS or (
         len(msg_stripped) <= 4 and any(g in msg_stripped for g in ["在吗", "你好", "客服", "在不", "有人"])
     ):
-        greeting_reply = "亲，在的呢！😊 我是PPT金牌定制中心的设计顾问小设，请问有什么可以帮您的呀？"
+        greeting_reply = "亲，在的呢！我是云芊艺小店的智小设AI客服，专注PPT/BP/课件定制，请问有什么可以帮您的呀？"
         await session_manager.add_message_async_safe(user_id, "user", message, db=db, platform=platform)
         await session_manager.add_message_async_safe(user_id, "assistant", greeting_reply, db=db, platform=platform)
         history = await session_manager.get_history_async_safe(user_id, db=db)
@@ -241,6 +241,10 @@ async def _process_chat(
         response_time_ms = int((time.monotonic() - _llm_start) * 1000)
         logger.info(f"⏱️ LLM 调用完成 | user: {user_id} | 耗时: {response_time_ms}ms")
 
+        # 去除首行空白（LLM 偶尔生成的前导换行符）
+        if reply:
+            reply = reply.lstrip("\n \t")
+
         # 空回复兜底：LLM 偶尔返回空内容
         if not reply or not reply.strip():
             logger.warning(f"LLM 返回空回复, 使用兜底话术 | user: {user_id}")
@@ -297,8 +301,19 @@ async def _process_chat(
                                 file_url=guide_image_url,
                             )
                             logger.info(f"已自动发送第二步引导图 | user: {user_id} | order: {order_sn}")
+
+                            # === 真人客服精髓：合规保护掩护（防脱媒预警） ===
+                            await asyncio.sleep(1.0)
+                            compliance_cover_msg = "亲，温馨提示：请不要脱离平台交易哦～"
+                            await pdd_api_client.send_customer_message(
+                                mall_id=req_data.get("shop_id", "default_shop"),
+                                buyer_id=user_id,
+                                content=compliance_cover_msg,
+                            )
+                            logger.info(f"已发送合规掩护话术 | user: {user_id}")
+
                         except Exception as e:
-                            logger.warning(f"发送引导图失败（不影响订单）: {e}")
+                            logger.warning(f"发送引导图或合规话术失败（不影响订单）: {e}")
 
                 # 从回复中移除指令标记，避免买家看到
                 reply = reply.replace(match.group(0), "").strip()
@@ -447,7 +462,7 @@ async def _process_chat_stream(
     if msg_stripped in GREETING_PATTERNS or (
         len(msg_stripped) <= 4 and any(g in msg_stripped for g in ["在吗", "你好", "客服", "在不", "有人"])
     ):
-        greeting_reply = "亲，在的呢！😊 我是PPT金牌定制中心的设计顾问小设，请问有什么可以帮您的呀？"
+        greeting_reply = "亲，在的呢！我是云芊艺小店的智小设AI客服，专注PPT/BP/课件定制，请问有什么可以帮您的呀？"
         await session_manager.add_message_async_safe(user_id, "user", message, db=db, platform=platform)
         await session_manager.add_message_async_safe(user_id, "assistant", greeting_reply, db=db, platform=platform)
         logger.info(f"⚡ 问候语快速通道(SSE) | user: {user_id} | msg: {message}")
@@ -524,13 +539,27 @@ async def _process_chat_stream(
         # 核心流式迭代 — 拦截 [[CREATE_ORDER:...]] 等内部指令，不发送给前端
         _order_buffer = ""  # 缓冲可能是内部指令的内容
         _in_command = False  # 是否正在收集内部指令
-        async for chunk in llm.chat_stream(messages=history, system_prompt=system_prompt, max_tokens=400):
+        _has_started_content = False  # 是否已经开始输出实际内容（过滤开头空白）
+
+        async for chunk in llm.chat_stream(messages=history, system_prompt=system_prompt, max_tokens=1000):
             # chat_stream 最后会 yield 一个 __meta__ dict
             if isinstance(chunk, dict) and chunk.get("__meta__"):
                 llm_meta = chunk
                 continue
             complete_reply += chunk
             chunk_count += 1
+
+            def resolve_chunk(text: str) -> str:
+                nonlocal _has_started_content
+                if not text:
+                    return ""
+                if not _has_started_content:
+                    text_stripped = text.lstrip("\n \t")
+                    if text_stripped:
+                        _has_started_content = True
+                        return text_stripped
+                    return ""
+                return text
 
             # 检测并拦截 [[CREATE_ORDER:...]] 指令
             if _in_command:
@@ -541,8 +570,10 @@ async def _process_chat_stream(
                     # 指令之后可能还有正文，提取 ]] 后面的部分
                     after_cmd = _order_buffer.split("]]", 1)[-1]
                     _order_buffer = ""
-                    if after_cmd.strip():
-                        yield f"data: {json.dumps({'chunk': after_cmd, 'done': False})}\n\n"
+
+                    parsed_chunk = resolve_chunk(after_cmd)
+                    if parsed_chunk:
+                        yield f"data: {json.dumps({'chunk': parsed_chunk, 'done': False})}\n\n"
                 continue  # 指令收集中，不发送给前端
             elif "[[" in chunk:
                 # 可能是内部指令的开始
@@ -550,11 +581,15 @@ async def _process_chat_stream(
                 # chunk 可能是 "正文[[CREATE"，将 [[ 之前的部分发送出去
                 before_cmd = chunk.split("[[", 1)[0]
                 _order_buffer = "[[" + chunk.split("[[", 1)[1]
-                if before_cmd.strip():
-                    yield f"data: {json.dumps({'chunk': before_cmd, 'done': False})}\n\n"
+
+                parsed_chunk = resolve_chunk(before_cmd)
+                if parsed_chunk:
+                    yield f"data: {json.dumps({'chunk': parsed_chunk, 'done': False})}\n\n"
                 continue
             else:
-                yield f"data: {json.dumps({'chunk': chunk, 'done': False})}\n\n"
+                parsed_chunk = resolve_chunk(chunk)
+                if parsed_chunk:
+                    yield f"data: {json.dumps({'chunk': parsed_chunk, 'done': False})}\n\n"
 
         response_time_ms = int((time.monotonic() - t_start) * 1000)
 
@@ -637,7 +672,10 @@ async def extract_requirements_public(user_id: str, db: DBSession = Depends(get_
     供买家模拟器直接调用（无需 JWT），逻辑与 dashboard 版一致。
     """
     from src.models.database import Message, run_in_db_thread
-    from src.services.requirement_extractor import extract_requirements_intelligently
+    from src.services.requirement_extractor import (
+        extract_requirements_intelligently,
+        refine_requirements_from_full_context,
+    )
 
     def _get_all_messages(db_session: DBSession):
         return db_session.query(Message).filter(Message.user_id == user_id).order_by(Message.created_at).all()
@@ -645,12 +683,17 @@ async def extract_requirements_public(user_id: str, db: DBSession = Depends(get_
     messages = await run_in_db_thread(_get_all_messages, db)
 
     buyer_msgs = [m.content for m in messages if m.role == "user"]
-    all_msgs = [m.content for m in messages]
+    all_msgs = [f"{'买家' if m.role == 'user' else 'AI客服'}: {m.content}" for m in messages]
     buyer_content = " ".join(buyer_msgs)
-    all_content = " ".join(all_msgs)
+    all_content = "\n".join(all_msgs)
 
-    # 调用提取服务（优先 LLM，降级正则）
+    # 第一轮：标准提取（优先 LLM，降级正则）
     result = await extract_requirements_intelligently(buyer_content, all_content)
+
+    # 第二轮：上下文精读优化（补充备注栏、修正遗漏字段）
+    if len(all_msgs) >= 4:  # 至少2轮对话才值得精读
+        result = await refine_requirements_from_full_context(result, all_content)
+
     return result
 
 
@@ -753,10 +796,18 @@ async def _process_pdd_webhook_background(req: PddWebhookRequest):
     db = SessionLocal()
     try:
         try:
-            # === 图片/文件兜底强提醒逻辑 ===
-            if req.image_url or "[图片]" in req.content or "[文件]" in req.content:
-                logger.warning(f"检测到买家发送图片或文件，触发强提醒 | buyer_id: {req.buyer_id}")
-                reply = "亲，已收到您的专属文件/图片资料啦！我们的设计师正在马不停蹄地为您查阅评估，马上给您答复哦，请稍等片刻～ 😊"
+            # === 数据清洗：过滤拼多多系统自动发出的商品卡片/访客溯源文案 ===
+            cleaned_content = re.sub(r"当[前期]用户来自.*?详情页", "", req.content).strip()
+
+            # 如果内容被完全清空且没有图片，直接跳过处理
+            if not cleaned_content and not req.image_url:
+                logger.info(f"PDD Webhook | 过滤了纯系统溯源消息 | buyer_id: {req.buyer_id}")
+                return
+
+            # 如果用户发了二维码、微信号等敏感信息，直接给合规掩护和确认，不麻烦大模型
+            if re.search(r"(微信号|加微信|二维码|手机号|vx)", cleaned_content, re.IGNORECASE) or req.image_url:
+                logger.warning(f"检测到敏感信息/图片，触发合规强提醒 | buyer_id: {req.buyer_id}")
+                reply = "好哒，收到您的资料啦！\n【温馨提示】：平台规定请不要脱离平台交易哦～我们的老师已经在拼多多后台为您处理了哦 😊"
                 result = {"reply": reply, "escalated": False, "escalation_reason": ""}
 
                 # 持久化该回复
@@ -765,7 +816,7 @@ async def _process_pdd_webhook_background(req: PddWebhookRequest):
                 await session_manager.add_message_async_safe(
                     req.buyer_id,
                     "user",
-                    req.content or "[发送了图片/文件]",
+                    req.content or "[发送了包含联系方式或图片的信息]",
                     db=db,
                     platform="pdd",
                     image_url=req.image_url,
@@ -776,15 +827,15 @@ async def _process_pdd_webhook_background(req: PddWebhookRequest):
                 from src.api.websocket_manager import manager
 
                 await manager.broadcast({"event": "media_received_alert", "user_id": req.buyer_id})
-
             else:
                 result = await _process_chat(
                     user_id=req.buyer_id,
-                    message=req.content,
+                    message=cleaned_content,
                     platform="pdd",
                     db=db,
                     image_url=req.image_url,
                 )
+
         except HTTPException:
             reply = "亲，客服系统正在维护中，请稍后再联系我们，抱歉给您带来不便！🙏"
             result = {"reply": reply, "escalated": False, "escalation_reason": ""}
