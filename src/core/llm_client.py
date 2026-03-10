@@ -305,9 +305,12 @@ class LLMClient:
                     t_start = time.monotonic()
 
                     # P4-Stream: 使用 stream=True 流式传输，降低 TTFT
-                    # 流式模式下 timeout 为首 chunk 超时，15s 兜底长回复场景
-                    # P5-Fix: GLM-4.7 默认开启思维链(thinking)，会消耗所有 token 在内部推理上
-                    # 客服场景无需思维链，通过 extra_body 显式关闭
+                    # P6-Fix: 只对支持思维链的模型(glm-4.7/glm-5/glm-z1)关闭 thinking
+                    # glm-4-air/flash 无思维链, 传此参数可能导致异常
+                    _thinking_models = ("glm-4.7", "glm-5", "glm-z1")
+                    _extra = {"thinking": {"type": "disabled"}} if any(
+                        m in p_config["model"] for m in _thinking_models
+                    ) else {}
                     response = await acompletion(
                         model=p_config["model"],
                         messages=full_messages,
@@ -316,8 +319,8 @@ class LLMClient:
                         temperature=temperature,
                         max_tokens=max_tokens,
                         stream=True,
-                        timeout=20.0,
-                        extra_body={"thinking": {"type": "disabled"}},
+                        timeout=12.0,
+                        **({"extra_body": _extra} if _extra else {}),
                     )
 
                     # 流式接收: 逐 chunk 拼接完整回复
@@ -379,6 +382,8 @@ class LLMClient:
         full_messages = self._truncate_messages_to_fit(full_messages, max_tokens)
 
         last_error = None
+        t_wall_start = time.monotonic()  # 包含重试在内的完整计时起点
+        total_attempts = 0
 
         for p_idx, provider in enumerate(self._providers_pool):
             p_name = provider["name"]
@@ -393,6 +398,7 @@ class LLMClient:
                 api_key = self._next_key_for_provider(provider)
                 if not api_key:
                     break  # Keys exhausted for this provider
+                total_attempts += 1
 
                 if attempt > 0:
                     jitter = random.uniform(0.3, 1.0)
@@ -405,6 +411,11 @@ class LLMClient:
                     )
                     t_start = time.monotonic()
 
+                    # P6-Fix: 同上，只对有思维链的模型关闭 thinking
+                    _thinking_models = ("glm-4.7", "glm-5", "glm-z1")
+                    _extra = {"thinking": {"type": "disabled"}} if any(
+                        m in p_config["model"] for m in _thinking_models
+                    ) else {}
                     response = await acompletion(
                         model=p_config["model"],
                         messages=full_messages,
@@ -413,8 +424,8 @@ class LLMClient:
                         temperature=temperature,
                         max_tokens=max_tokens,
                         stream=True,
-                        timeout=20.0,
-                        extra_body={"thinking": {"type": "disabled"}},
+                        timeout=12.0,
+                        **({"extra_body": _extra} if _extra else {}),
                     )
 
                     ttft_ms = None
@@ -428,11 +439,13 @@ class LLMClient:
                             yield delta.content
 
                     elapsed_ms = int((time.monotonic() - t_start) * 1000)
+                    wall_total_ms = int((time.monotonic() - t_wall_start) * 1000)
                     provider["consecutive_failures"] = 0
 
                     logger.info(
                         f"LLM 成功(SSE) ({'Failover兜底' if p_idx > 0 else '默认'}) | 厂商: {p_name} | "
-                        f"TTFT: {ttft_ms or '?'}ms | 总耗时: {elapsed_ms}ms | Chunks: {total_chunks}"
+                        f"TTFT: {ttft_ms or '?'}ms | 本次耗时: {elapsed_ms}ms | "
+                        f"含重试总耗时: {wall_total_ms}ms | 尝试: {total_attempts} | Chunks: {total_chunks}"
                     )
                     # 生成完成后 yield 元数据供上层收集
                     yield {
@@ -441,6 +454,8 @@ class LLMClient:
                         "provider": p_name,
                         "ttft_ms": ttft_ms,
                         "total_ms": elapsed_ms,
+                        "wall_total_ms": wall_total_ms,
+                        "attempt_count": total_attempts,
                         "chunk_count": total_chunks,
                         "streaming": True,
                     }

@@ -34,25 +34,13 @@ REASON_RULES = [
     (["线下", "上门", "面谈", "见面", "现场"], "offline", "线下服务"),
 ]
 
-INTENT_SYSTEM_PROMPT = """
-你是一个电商智能客服系统的「意图分类器」。分析【买家】的话语和【AI客服】的回复，判断是否需要移交「人工客服」。
+import os
+# 读取外部隔离的意图分类 Prompt
+PROMPT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "prompts")
+INTENT_PROMPT_PATH = os.path.join(PROMPT_DIR, "intent_classification", "prompt.md")
 
-【必须转接人工的条件】
-1. 买家明确说出需要人工客服、真人。
-2. 投诉纠纷：买家情绪激动，提到投诉、骗子、差评、退款。
-3. 复杂商务：涉及几十上百套的大额订单、长期合作、线下见面。
-4. 价格死磕：买家反复要求降价且明确不满意。
-5. 极端紧急：要求几小时内马上出图。
-6. AI已承诺：如果AI回复中已经明确表示了将要「转接人工」。
-
-【不需要转接人工的情况（重要！）】
-- 买家只是询问最低价格/最低预算/起步价 → 这是正常咨询，AI可以直接回答，不需要转人工。
-- 买家预算低于30元 → AI自动拒绝即可，不需要转人工。
-
-严格输出纯 JSON（不要Markdown标记）：
-{"should_escalate": true或false, "reason_code": "urgent"|"bargain"|"complaint"|"large_order"|"offline"|"other"|"none", "reason_label": "中文标签"}
-"""
-
+with open(INTENT_PROMPT_PATH, "r", encoding="utf-8") as f:
+    INTENT_SYSTEM_PROMPT = f.read()
 
 # P1-Root-Cause-Sweep: 使用 Pydantic 模型校验 LLM 返回的 JSON
 class EscalationResult(BaseModel):

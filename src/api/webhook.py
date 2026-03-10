@@ -204,17 +204,17 @@ async def _process_chat(
 
     rag_context = rag.build_context(retrieved_docs)
 
-    # L2: 动态加载 Prompt
-    prompt_cfg = prompt_loader.get("ppt_consultant")
-    system_prompt = prompt_cfg["base_system_prompt"].format(
+    # L3: 模块化 Prompt 组装（v3.0 架构）
+    system_prompt = prompt_loader.assemble_system_prompt(
         rag_context=rag_context if rag_context else "（知识库暂未入库，请凭经验回答）"
     )
 
     # === P0-Fix-2: 从内存/DB 获取历史（异步安全读取）===
     full_history = await session_manager.get_history_async_safe(user_id, db=db)
 
-    # P3-Speed: 限制发送给 LLM 的历史轮数（6→4），显著减少 Token 消耗加快 API 响应
-    MAX_HISTORY_FOR_LLM = 4
+    # P7-Memory: 放宽历史轮数 4→20，避免 AI 遗忘客户之前提供的关键信息（如页数、用途）
+    # glm-4-air 支持 128K 上下文窗口，20轮(≈40条消息)完全够用
+    MAX_HISTORY_FOR_LLM = 20
     history = full_history[-MAX_HISTORY_FOR_LLM:] if len(full_history) > MAX_HISTORY_FOR_LLM else full_history
 
     # P2: Vision API 支持
@@ -229,9 +229,9 @@ async def _process_chat(
     )
 
     # === 预处理：Slot Filling 检查（检测 PPT 生成核心要素）===
-    ppt_keywords = prompt_cfg.get("ppt_keywords", ["PPT"])
+    ppt_keywords = prompt_loader.get_ppt_keywords()
     if any(k in message for k in ppt_keywords) and "[[CREATE_ORDER" not in message:
-        system_prompt += "\n\n" + prompt_cfg.get("slot_filling_hint", "")
+        system_prompt += "\n\n" + prompt_loader.get_slot_filling_hint()
 
     _llm_start = time.monotonic()
     _is_fallback = False
@@ -268,57 +268,12 @@ async def _process_chat(
     )
     final_history = await session_manager.get_history_async_safe(user_id, db=db)
 
-    # === PPT 自动化任务触发检测 ===
+    # === P8-Policy: 订单创建权限已关闭 ===
+    # AI 当前仅有"讲解/收集需求/报价"权限，不允许创建订单。
+    # 如果 LLM 仍然输出了 [[CREATE_ORDER:...]]，仅做清除，不执行。
     if "[[CREATE_ORDER:" in reply:
-        try:
-            match = re.search(r"\[\[CREATE_ORDER:(.*?)\]\]", reply, re.DOTALL)
-            if match:
-                raw_json = match.group(1).strip()
-                try:
-                    req_data = json.loads(raw_json)
-                except json.JSONDecodeError:
-                    # Fallback for slightly malformed JSON sometimes produced by LLMs
-                    import ast
-
-                    try:
-                        req_data = ast.literal_eval(raw_json)
-                    except Exception:
-                        req_data = {}
-
-                # Make sure req_data is a dict
-                if isinstance(req_data, dict):
-                    order_sn = await task_coordinator.create_order(
-                        user_id=user_id, platform=platform, requirement=req_data
-                    )
-
-                    # === 下单成功后：自动发送"第二步"引导图 ===
-                    if order_sn and platform == "pdd":
-                        try:
-                            guide_image_url = f"{settings.pdd_bot_base_url}/static/assets/step2_wechat_guide.png"
-                            await pdd_api_client.send_file_message(
-                                mall_id=req_data.get("shop_id", "default_shop"),
-                                buyer_id=user_id,
-                                file_url=guide_image_url,
-                            )
-                            logger.info(f"已自动发送第二步引导图 | user: {user_id} | order: {order_sn}")
-
-                            # === 真人客服精髓：合规保护掩护（防脱媒预警） ===
-                            await asyncio.sleep(1.0)
-                            compliance_cover_msg = "亲，温馨提示：请不要脱离平台交易哦～"
-                            await pdd_api_client.send_customer_message(
-                                mall_id=req_data.get("shop_id", "default_shop"),
-                                buyer_id=user_id,
-                                content=compliance_cover_msg,
-                            )
-                            logger.info(f"已发送合规掩护话术 | user: {user_id}")
-
-                        except Exception as e:
-                            logger.warning(f"发送引导图或合规话术失败（不影响订单）: {e}")
-
-                # 从回复中移除指令标记，避免买家看到
-                reply = reply.replace(match.group(0), "").strip()
-        except Exception as e:
-            logger.error(f"解析订单指令失败: {e}")
+        logger.warning(f"⚠️ LLM 输出了 CREATE_ORDER 指令但权限已关闭，仅清除 | user: {user_id}")
+        reply = re.sub(r"\[\[CREATE_ORDER:.*?\]\]", "", reply, flags=re.DOTALL).strip()
 
     # === L2: 内容安全门网 (Guardrail) 拦截 ===
     guardrail_result = check_ai_output(reply)
@@ -475,13 +430,14 @@ async def _process_chat_stream(
     retrieved_docs, _ = await asyncio.gather(retrieved_docs_task, add_user_msg_task)
 
     rag_context = rag.build_context(retrieved_docs)
-    prompt_cfg = prompt_loader.get("ppt_consultant")
-    system_prompt = prompt_cfg["base_system_prompt"].format(
+    # L3: 模块化 Prompt 组装（v3.0 架构）
+    system_prompt = prompt_loader.assemble_system_prompt(
         rag_context=rag_context if rag_context else "（知识库暂未入库，请凭经验回答）"
     )
 
     full_history = await session_manager.get_history_async_safe(user_id, db=db)
-    MAX_HISTORY_FOR_LLM = 10
+    # P7-Memory: 统一历史窗口为20轮，与非流式路径一致
+    MAX_HISTORY_FOR_LLM = 20
     history = full_history[-MAX_HISTORY_FOR_LLM:] if len(full_history) > MAX_HISTORY_FOR_LLM else full_history
 
     # =========================================================
@@ -523,9 +479,9 @@ async def _process_chat_stream(
             {"type": "image_url", "image_url": {"url": image_url}},
         ]
 
-    ppt_keywords = prompt_cfg.get("ppt_keywords", ["PPT"])
+    ppt_keywords = prompt_loader.get_ppt_keywords()
     if any(k in message for k in ppt_keywords) and "[[CREATE_ORDER" not in message:
-        system_prompt += "\n\n" + prompt_cfg.get("slot_filling_hint", "")
+        system_prompt += "\n\n" + prompt_loader.get_slot_filling_hint()
 
     # 通知前端正在生成
     yield f"data: {json.dumps({'chunk': '', 'done': False})}\n\n"
@@ -624,7 +580,7 @@ async def _process_chat_stream(
                 "model": llm_meta.get("model", "unknown"),
                 "provider": llm_meta.get("provider", "unknown"),
                 "backend_ttft_ms": llm_meta.get("ttft_ms"),
-                "backend_total_ms": response_time_ms,
+                "backend_total_ms": llm_meta.get("wall_total_ms") or response_time_ms,
                 "llm_ttft_ms": llm_meta.get("ttft_ms"),
                 "llm_total_ms": llm_meta.get("total_ms"),
                 "streaming": llm_meta.get("streaming", True),
@@ -635,6 +591,7 @@ async def _process_chat_stream(
                 "guardrail_blocked": guardrail_result.blocked,
                 "guardrail_rules": guardrail_result.triggered_rules,
                 "greeting_fastpath": False,
+                "attempt_count": llm_meta.get("attempt_count", 1),
             },
         }
         yield f"data: {json.dumps(done_payload)}\n\n"
