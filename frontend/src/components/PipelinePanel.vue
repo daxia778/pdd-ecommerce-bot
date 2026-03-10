@@ -126,7 +126,7 @@
               <div class="space-y-1.5">
                 <div v-for="(item, idx) in parseRequirement(order.requirement)" :key="idx"
                   class="flex items-start gap-2">
-                  <span class="text-[10px] font-bold text-gray-400 w-12 shrink-0 mt-0.5">{{ item.label }}</span>
+                  <span class="text-[10px] font-bold text-gray-400 w-16 shrink-0 mt-0.5">{{ item.label }}</span>
                   <span class="text-xs text-gray-700 leading-relaxed font-medium">{{ item.value }}</span>
                 </div>
               </div>
@@ -247,6 +247,12 @@ const parseRequirement = (str) => {
     details: '备注',
     deadline: '截止日',
     format: '格式',
+    urgency: '紧急度',
+    order_type: '订单类型',
+    budget: '预算',
+    audience: '受众',
+    outline: '大纲',
+    notes: '备注',
   };
   try {
     const obj = JSON.parse(str || '{}');

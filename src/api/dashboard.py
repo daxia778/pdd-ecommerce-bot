@@ -892,6 +892,27 @@ class LLMConfigSaveRequest(BaseModel):
     model: str = "glm-4.7"
 
 
+@router.get("/api/dashboard/llm-config")
+async def get_llm_config():
+    """
+    读取当前运行时的 LLM 配置（API Key 脱敏），供前端设置面板预填显示。
+    """
+    api_key = os.environ.get("ZHIPU_API_KEYS", "")
+    model = os.environ.get("MAIN_CHAT_MODEL", "glm-4-flash")
+
+    if api_key:
+        masked = api_key[:4] + "****" + api_key[-4:] if len(api_key) > 8 else "****"
+    else:
+        masked = "(未配置)"
+
+    return {
+        "api_key_masked": masked,
+        "api_key_full": api_key,  # 前端需要完整 key 来做测试
+        "model": model,
+        "configured": bool(api_key),
+    }
+
+
 @router.post("/api/dashboard/llm-config")
 async def save_llm_config(body: LLMConfigSaveRequest):
     """
@@ -935,3 +956,48 @@ async def save_llm_config(body: LLMConfigSaveRequest):
     except Exception as e:
         logger.error(f"保存 LLM 配置失败: {e}")
         return {"success": False, "error": str(e)}
+
+
+# ==========================================================================
+# PDD 平台订单查询 API（只读）—— 预留接口，配置 PDD 凭证后即可使用
+# 注意：仅读取订单状态，不做任何写操作，避免金额等敏感信息出错
+# ==========================================================================
+
+
+@router.get("/api/dashboard/pdd-orders")
+async def get_pdd_orders(
+    order_status: int | None = None,
+    page: int = 1,
+    page_size: int = 20,
+):
+    """
+    从 PDD 开放平台查询店铺订单列表（只读）。
+
+    order_status: 1=待付款 2=待发货 3=已发货 5=已完成 6=已关闭
+    """
+    result = await pdd_api_client.get_order_list(
+        order_status=order_status,
+        page=page,
+        page_size=page_size,
+    )
+    return result
+
+
+@router.get("/api/dashboard/pdd-orders/{order_sn}")
+async def get_pdd_order_detail(order_sn: str):
+    """
+    根据 PDD 平台订单号查询订单详情（只读）。
+    返回 PDD 原始订单数据，包括商品、金额、物流等信息。
+    """
+    result = await pdd_api_client.get_order_detail(order_sn)
+    return result
+
+
+@router.get("/api/dashboard/pdd-orders/{order_sn}/status")
+async def get_pdd_order_status(order_sn: str):
+    """
+    快速查询 PDD 订单状态（只读精简版）。
+    仅返回订单号、状态标签和支付金额，供 AI 客服读取使用。
+    """
+    result = await pdd_api_client.get_order_status(order_sn)
+    return result

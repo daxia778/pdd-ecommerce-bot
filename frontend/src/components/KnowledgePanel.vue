@@ -19,6 +19,17 @@
               </div>
           </div>
 
+          <!-- 搜索栏 -->
+          <div class="px-6 py-3 border-b bg-white">
+            <div class="relative">
+              <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input v-model="searchQuery" type="text" placeholder="搜索知识库内容..."
+                class="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all" />
+            </div>
+          </div>
+
           <!-- 批量导入面板 -->
           <div v-if="showImport" class="p-6 bg-green-50 border-b">
             <h3 class="font-bold text-green-800 mb-3 flex items-center gap-2">📦 批量导入知识 (CSV / TXT)</h3>
@@ -88,7 +99,7 @@ PPT多少钱,基础款50元/页起
                       </tr>
                   </thead>
                   <tbody class="divide-y divide-gray-50">
-                      <tr v-for="(km, idx) in store.knowledgeBase" :key="km.id" class="hover:bg-gray-50/50 transition-colors">
+                      <tr v-for="(km, idx) in filteredKnowledge" :key="km.id" class="hover:bg-gray-50/50 transition-colors">
                           <td class="px-6 py-4">
                              <div class="text-[10px] text-gray-400 font-mono">{{ km.id.slice(0, 8) }}...</div>
                              <div class="text-[9px] text-green-500 font-bold mt-1">v2.{{ idx }} (已生效)</div>
@@ -120,13 +131,20 @@ PPT多少钱,基础款50元/页起
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import { store } from '../store.js';
 
 const showAddKnowledge = ref(false);
 const showImport = ref(false);
 const dragOver = ref(false);
 const newKnowledgeContent = ref('');
+const searchQuery = ref('');
+
+const filteredKnowledge = computed(() => {
+  if (!searchQuery.value.trim()) return store.knowledgeBase;
+  const q = searchQuery.value.toLowerCase();
+  return store.knowledgeBase.filter(km => km.content.toLowerCase().includes(q));
+});
 
 const addKnowledge = async () => {
   if (!newKnowledgeContent.value.trim()) return;

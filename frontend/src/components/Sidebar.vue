@@ -54,8 +54,8 @@
           'relative group flex items-center transition-all cursor-pointer border mx-4 my-1 py-3 rounded-2xl',
           collapsed ? 'px-[18px] gap-0' : 'px-[18px] gap-3',
           store.activePanel === item.id
-            ? 'bg-red-50 text-red-600 border-red-100'
-            : 'text-gray-500 border-transparent hover:bg-red-50 hover:text-red-600'
+            ? 'bg-red-50 text-red-600 border-red-100 border-l-[3px] border-l-red-500 shadow-sm shadow-red-100/50'
+            : 'text-gray-500 border-transparent hover:bg-gray-50 hover:text-red-500'
         ]"
       >
         <span v-html="item.icon" class="w-5 h-5 shrink-0 z-10"></span>

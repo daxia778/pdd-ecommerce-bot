@@ -106,8 +106,18 @@
 
               <!-- 模型 API 接入测试 -->
               <div>
-                  <h3 class="text-sm font-bold text-gray-700 border-l-4 border-red-500 pl-3 mb-4">🔌 模型 API 接入测试 (LLM Connection Test)</h3>
-                  <p class="text-xs text-gray-400 mb-4 pl-4">输入 API Key 后点击测试按钮，验证 LLM 服务的网络可达性和鉴权状态。测试不影响生产环境。</p>
+                  <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-sm font-bold text-gray-700 border-l-4 border-red-500 pl-3">🔌 模型 API 接入测试 (LLM Connection Test)</h3>
+                    <span v-if="llmConfigured" class="flex items-center gap-1.5 px-3 py-1 bg-green-50 border border-green-200 rounded-full text-xs font-bold text-green-600">
+                      <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                      API 已配置 · {{ testModel }}
+                    </span>
+                    <span v-else class="flex items-center gap-1.5 px-3 py-1 bg-amber-50 border border-amber-200 rounded-full text-xs font-bold text-amber-600">
+                      <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+                      未配置
+                    </span>
+                  </div>
+                  <p class="text-xs text-gray-400 mb-4 pl-4">当前正在使用的 API Key 已自动加载。您可以修改后点击测试按钮验证，确认无误后保存到 .env 文件。</p>
                   <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                      <div class="md:col-span-2">
                         <label class="block text-[11px] font-bold text-gray-500 uppercase mb-1">API Key</label>
@@ -236,9 +246,29 @@ const testLoading = ref(false);
 const testResult = ref(null);
 const saveLoading = ref(false);
 const saveMsg = ref('');
+const llmConfigured = ref(false);
+
+const loadCurrentLLMConfig = async () => {
+  try {
+    const token = localStorage.getItem('pdd_admin_token');
+    const res = await fetch('/api/dashboard/llm-config', {
+      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.configured && data.api_key_full) {
+      testApiKey.value = data.api_key_full;
+      testModel.value = data.model || 'glm-4-flash';
+      llmConfigured.value = true;
+    }
+  } catch (e) {
+    console.warn('加载 LLM 配置失败:', e);
+  }
+};
 
 onMounted(() => {
   store.loadPrompt('ppt_consultant');
+  loadCurrentLLMConfig();
 });
 
 const runLLMTest = async () => {

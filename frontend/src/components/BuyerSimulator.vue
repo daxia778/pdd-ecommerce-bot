@@ -221,7 +221,7 @@
     </div>
 
     <!-- Right: Diagnostics Panel -->
-    <div class="hidden xl:flex flex-col flex-1 min-w-[360px] h-full overflow-hidden">
+    <div class="hidden xl:flex flex-col flex-1 min-w-[280px] h-full overflow-hidden">
       <DiagnosticsPanel ref="diagnosticsPanel" />
     </div>
   </div>
