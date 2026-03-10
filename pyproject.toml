@@ -7,12 +7,12 @@
 name = "pdd-ecommerce-bot"
 version = "0.2.0"
 description = "基于 RAG + LLM + SQLite 的拼多多智能客服系统"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 
 # ===== Ruff: 超快速的 Python Linter + Formatter =====
 # 文档: https://docs.astral.sh/ruff/
 [tool.ruff]
-target-version = "py310"
+target-version = "py39"
 line-length = 120
 # 排除不需要检查的目录
 exclude = [
@@ -61,7 +61,7 @@ line-ending = "auto"
 # ===== Mypy: 静态类型检查 =====
 # 文档: https://mypy.readthedocs.io/
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.9"
 # 渐进式引入：先不强制所有函数都有类型注解
 disallow_untyped_defs = false
 # 忽略第三方库的类型缺失（避免大量 import 报错）

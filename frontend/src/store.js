@@ -75,10 +75,18 @@ export const store = reactive({
                 fetch('/api/dashboard/escalations', { headers }),
                 fetch('/api/dashboard/orders', { headers }),
             ]);
+
+            // P0-Fix: 任何接口返回 401 立即登出，打破 WebSocket 风暴死循环
+            if ([resStats, resSessions, resEsc, resOrders].some(r => r.status === 401)) {
+                console.warn('🔒 Token 已失效，自动登出');
+                this.logout();
+                return;
+            }
+
             if (resStats.ok) {
                 const data = await resStats.json();
                 if (data.active_sessions > 0 || data.pending_escalations > 0 || data.active_orders > 0) {
-                    this.stats = { ...DEMO_STATS, ...data }; // Merge so we don't lose the new mock fields if backend doesn't have them
+                    this.stats = { ...DEMO_STATS, ...data };
                 } else {
                     this.stats = DEMO_STATS;
                 }
@@ -87,12 +95,11 @@ export const store = reactive({
                 const data = await resSessions.json();
                 const backendIds = new Set(data.map(s => s.user_id));
                 const filteredDemo = DEMO_SESSIONS.filter(s => !backendIds.has(s.user_id));
-                // 合并后将 simulator 来源会话置顶
                 const merged = [...data, ...filteredDemo];
                 merged.sort((a, b) => {
                     const aIsSim = a.platform === 'simulator' ? 1 : 0;
                     const bIsSim = b.platform === 'simulator' ? 1 : 0;
-                    return bIsSim - aIsSim; // simulator 在前
+                    return bIsSim - aIsSim;
                 });
                 this.sessions = merged;
             }
@@ -335,10 +342,26 @@ export const store = reactive({
                 } catch (e) { /* ignore */ }
             };
 
-            this.ws.onclose = () => {
+            this.ws.onclose = (evt) => {
                 if (this.wsHeartbeat) clearInterval(this.wsHeartbeat);
+
+                // P0-Fix: 鉴权失败的 close code (1008=Policy Violation, 4001/4003=自定义鉴权错误)
+                // 立即登出，不再重连，打破 WebSocket 风暴
+                const AUTH_FAIL_CODES = [1008, 4001, 4003];
+                if (AUTH_FAIL_CODES.includes(evt.code)) {
+                    console.warn(`🔒 WebSocket 鉴权失败 (code=${evt.code})，自动登出`);
+                    this.logout();
+                    return;
+                }
+
+                // P0-Fix: 连续失败超过 8 次，大概率是 Token 过期，强制登出
+                if (this._wsRetryCount >= 8) {
+                    console.warn('🔒 WebSocket 重连次数过多，疑似 Token 过期，自动登出');
+                    this.logout();
+                    return;
+                }
+
                 // P1-3: 指数退避 + Jitter，防止服务恢复时所有客户端同时重连形成雪崩
-                // delay = min(2^attempt × 1000 + 随机抖动[0~1000ms], 30000ms)
                 const attempt = this._wsRetryCount++;
                 const baseDelay = Math.min(Math.pow(2, attempt) * 1000, 30000);
                 const jitter = Math.random() * 1000;
@@ -372,6 +395,14 @@ export const store = reactive({
             case 'ai_pause_toggled':
                 this.pausedSessions[user_id] = msg.is_paused;
                 break;
+            case 'media_received_alert':
+                this.fetchData();
+                this._notify(
+                    '⚠️ 收到买家新文件/图片',
+                    `买家 ${user_id || ''} 发送了文件或图片资料，AI无法处理，请人工及时查阅！`
+                );
+                this._playSoundAlert();
+                break;
             case 'manual_message_sent':
                 if (this.selectedUser === user_id) {
                     this.viewChat(user_id, true);
@@ -394,6 +425,30 @@ export const store = reactive({
         });
         if (Notification.permission === 'granted') {
             send();
+        }
+    },
+
+    _playSoundAlert() {
+        try {
+            // 使用浏览器内置的振荡器合成一段警报音，避免外部mp3文件路径问题
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(800, audioCtx.currentTime); // Hz
+            oscillator.frequency.exponentialRampToValueAtTime(400, audioCtx.currentTime + 0.5);
+
+            gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+
+            oscillator.start(audioCtx.currentTime);
+            oscillator.stop(audioCtx.currentTime + 0.5);
+        } catch (e) {
+            console.warn("播放警告音失败 (可能被浏览器自动播放策略拦截):", e);
         }
     },
 

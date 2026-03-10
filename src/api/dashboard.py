@@ -242,12 +242,10 @@ async def search_messages(q: str = Query("", min_length=1), db: DBSession = Depe
 async def extract_requirements(user_id: str, db: DBSession = Depends(get_db)):
     """
     从指定用户的对话中提取结构化需求信息。
-    优先从 AI 生成的 [[CREATE_ORDER:...]] 标记中解析；
-    若无标记，则从买家消息中基于关键词启发式提取。
-    返回每个字段的置信度（0 = 未提取到，不展示置信度）。
+    智能提取：优先依靠 LLM 强大的 NLP 理解能力，代替之前的正则匹配；
+    如果失败，自动降级为正则表达式启发式提取。
     """
-    import json
-    import re
+    from src.services.requirement_extractor import extract_requirements_intelligently
 
     def _get_all_messages(db_session: DBSession):
         return db_session.query(Message).filter(Message.user_id == user_id).order_by(Message.created_at).all()
@@ -260,88 +258,8 @@ async def extract_requirements(user_id: str, db: DBSession = Depends(get_db)):
     buyer_content = " ".join(buyer_msgs)
     all_content = " ".join(all_msgs)
 
-    # 每个字段的结果和置信度（0 = 未检测到）
-    fields = ["topic", "pages", "style", "deadline", "budget", "audience", "outline", "assets"]
-    result = {k: "" for k in fields}
-    confidence = {k: 0 for k in fields}
-    result["source"] = "none"
-
-    # 1. 优先从 [[CREATE_ORDER:...]] 提取（高置信度）
-    order_match = re.search(r"\[\[CREATE_ORDER:(.*?)\]\]", all_content, re.DOTALL)
-    if order_match:
-        try:
-            raw = order_match.group(1).strip()
-            data = json.loads(raw)
-            field_map = {
-                "topic": "topic",
-                "pages": "pages",
-                "style": "style",
-                "deadline": "deadline",
-                "budget": "budget",
-                "audience": "audience",
-                "outline": "outline",
-                "assets": "assets",
-            }
-            for field, json_key in field_map.items():
-                val = (
-                    data.get(json_key, "") or data.get("details", "")
-                    if json_key == "outline"
-                    else data.get(json_key, "")
-                )
-                if val and str(val).strip():
-                    result[field] = str(val).strip()
-                    confidence[field] = 95 if field in ("topic", "pages") else 88
-            result["source"] = "order_token"
-            result["confidence"] = confidence
-            return result
-        except Exception:
-            pass
-
-    # 2. 启发式关键词提取 — 仅从买家消息中提取
-    # 页数（买家提到的）
-    pages_m = re.search(r"(\d+)\s*[页pP]", buyer_content)
-    if pages_m:
-        result["pages"] = f"{pages_m.group(1)}页"
-        confidence["pages"] = 90
-
-    # 主题：从买家消息中寻找"做/要/需要 + 名词短语"
-    topic_patterns = [
-        r"(?:做|要|需要|定制|制作)\s*([\u4e00-\u9fa5a-zA-Z]{2,15}(?:PPT|ppt|计划书|报告|方案|汇报|总结|答辩|展示|投标|培训|介绍|宣传))",
-        r"([\u4e00-\u9fa5]{2,8}(?:计划书|报告|方案|汇报|总结|答辩|投标|培训|宣传|介绍))",
-    ]
-    for pat in topic_patterns:
-        topic_m = re.search(pat, buyer_content)
-        if topic_m:
-            result["topic"] = topic_m.group(1).strip()
-            confidence["topic"] = 80
-            break
-
-    # 风格（从买家消息中）
-    style_keywords = ["商务", "学术", "简约", "科技", "高端", "创投", "正规", "现代", "简洁", "大气"]
-    for kw in style_keywords:
-        if kw in buyer_content:
-            result["style"] = kw
-            confidence["style"] = 75
-            break
-
-    # 时间（从买家消息中）
-    deadline_keywords = ["明天", "后天", "本周", "下周", "月底", "紧急", "加急", "尽快", "马上"]
-    for kw in deadline_keywords:
-        if kw in buyer_content:
-            result["deadline"] = kw
-            confidence["deadline"] = 82
-            break
-
-    # 预算（从买家消息中）
-    budget_m = re.search(r"(\d+)\s*[元块]", buyer_content)
-    if budget_m:
-        result["budget"] = f"{budget_m.group(1)}元"
-        confidence["budget"] = 78
-
-    if any(result[k] for k in fields):
-        result["source"] = "heuristic"
-
-    result["confidence"] = confidence
+    # 调用提取服务（优先 LLM，降级正则）
+    result = await extract_requirements_intelligently(buyer_content, all_content)
     return result
 
 
@@ -641,13 +559,23 @@ async def get_system_health(db: DBSession = Depends(get_db)):
     # 1. PDD API 连接状态
     from src.services.pdd_api_client import pdd_api_client
 
-    pdd_configured = bool(pdd_api_client.client_id and pdd_api_client.client_secret and pdd_api_client.access_token)
+    # 检测占位符值 — "your_xxx" 类占位符不算已配置
+    def _is_real_value(v):
+        return bool(v) and not str(v).startswith("your_") and v != "placeholder"
+
+    pdd_configured = all(
+        [
+            _is_real_value(pdd_api_client.client_id),
+            _is_real_value(pdd_api_client.client_secret),
+            _is_real_value(pdd_api_client.access_token),
+        ]
+    )
     components.append(
         {
             "name": "PDD 开放平台",
             "key": "pdd_api",
-            "status": "healthy" if pdd_configured else "degraded",
-            "detail": "凭证已配置，连接正常" if pdd_configured else "凭证未配置，降级为日志模式",
+            "status": "healthy" if pdd_configured else "inactive",
+            "detail": "凭证已配置，连接正常" if pdd_configured else "凭证未配置，点击查看配置指引",
             "icon": "🛒",
         }
     )
@@ -795,3 +723,215 @@ async def get_system_health(db: DBSession = Depends(get_db)):
         overall = "healthy"
 
     return {"overall": overall, "components": components}
+
+
+@router.get("/api/dashboard/component-config/{key}")
+async def get_component_config(key: str):
+    """
+    返回指定组件的配置文件内容，供前端管理面板在线查看。
+    """
+    import os
+
+    config_map = {
+        "pdd_api": {
+            "title": "PDD 开放平台配置",
+            "file": "config/settings.py",
+            "env_keys": ["PDD_CLIENT_ID", "PDD_CLIENT_SECRET", "PDD_ACCESS_TOKEN"],
+        },
+        "llm": {
+            "title": "LLM 大模型配置",
+            "file": "config/settings.py",
+            "env_keys": ["ZHIPU_API_KEYS", "MAIN_CHAT_MODEL", "DEEPSEEK_API_KEYS", "LLM_CHAT_TIMEOUT", "MAX_RETRIES"],
+        },
+        "rag": {
+            "title": "RAG 知识库配置",
+            "file": "data/knowledge/",
+            "env_keys": ["RAG_TOP_K", "RAG_RERANK_TOP_N"],
+        },
+        "message_queue": {
+            "title": "消息重试队列配置",
+            "file": "src/services/message_retry_queue.py",
+            "env_keys": [],
+        },
+        "wecom": {
+            "title": "企业微信配置",
+            "file": "config/settings.py",
+            "env_keys": ["WECOM_CORP_ID", "WECOM_AGENT_ID", "WECOM_SECRET"],
+        },
+        "prompt": {
+            "title": "Prompt 话术配置",
+            "file": "data/prompts/ppt_consultant.yaml",
+            "env_keys": [],
+        },
+        "database": {
+            "title": "SQLite 数据库配置",
+            "file": "config/settings.py",
+            "env_keys": ["DATABASE_URL"],
+        },
+    }
+
+    if key not in config_map:
+        return {"error": f"未知组件: {key}"}
+
+    info = config_map[key]
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    file_path = os.path.join(base_dir, info["file"])
+
+    # Read config file content
+    file_content = ""
+    if os.path.isfile(file_path):
+        try:
+            with open(file_path, encoding="utf-8") as f:
+                file_content = f.read()
+        except Exception as e:
+            file_content = f"[读取失败: {e}]"
+    elif os.path.isdir(file_path):
+        # List files in directory
+        try:
+            files = sorted(os.listdir(file_path))
+            file_content = f"目录包含 {len(files)} 个文件：\n" + "\n".join(
+                f"  📄 {fn}" for fn in files if not fn.startswith(".")
+            )
+        except Exception as e:
+            file_content = f"[读取目录失败: {e}]"
+    else:
+        file_content = f"[文件不存在: {info['file']}]"
+
+    # Read relevant env vars (masked for security)
+    env_values = {}
+    for env_key in info.get("env_keys", []):
+        val = os.environ.get(env_key, "")
+        if val:
+            if any(secret in env_key.upper() for secret in ["SECRET", "KEY", "TOKEN", "PASSWORD"]):
+                env_values[env_key] = val[:4] + "****" + val[-4:] if len(val) > 8 else "****"
+            else:
+                env_values[env_key] = val
+        else:
+            env_values[env_key] = "(未配置)"
+
+    return {
+        "title": info["title"],
+        "file_path": info["file"],
+        "file_content": file_content,
+        "env_vars": env_values,
+    }
+
+
+# ==========================================================================
+# LLM API 接入测试 — 允许管理员手动验证 API Key 可达性
+# ==========================================================================
+
+
+class LLMTestRequest(BaseModel):
+    api_key: str
+    model: str = "glm-4-flash"
+    base_url: str = "https://open.bigmodel.cn/api/paas/v4/"
+
+
+@router.post("/api/dashboard/llm-test")
+async def test_llm_connection(body: LLMTestRequest):
+    """
+    手动测试 LLM API Key 的可达性，返回延迟和模型状态。
+    不会影响生产环境的 LLM Client，仅做一次性探测。
+    """
+    import time
+
+    import litellm
+
+    t_start = time.monotonic()
+    try:
+        response = await litellm.acompletion(
+            model=f"openai/{body.model}",
+            messages=[{"role": "user", "content": "hi"}],
+            api_key=body.api_key,
+            base_url=body.base_url,
+            max_tokens=10,
+            temperature=0.1,
+            timeout=15.0,
+        )
+        elapsed_ms = int((time.monotonic() - t_start) * 1000)
+        reply = response.choices[0].message.content if response.choices else ""
+        model_used = getattr(response, "model", body.model)
+        usage = getattr(response, "usage", None)
+
+        return {
+            "success": True,
+            "latency_ms": elapsed_ms,
+            "model": model_used,
+            "reply": reply,
+            "tokens_used": usage.total_tokens if usage else None,
+            "key_suffix": f"***{body.api_key[-4:]}",
+            "error": None,
+        }
+    except litellm.AuthenticationError as e:
+        elapsed_ms = int((time.monotonic() - t_start) * 1000)
+        return {
+            "success": False,
+            "latency_ms": elapsed_ms,
+            "model": body.model,
+            "reply": None,
+            "tokens_used": None,
+            "key_suffix": f"***{body.api_key[-4:]}",
+            "error": f"鉴权失败 (API Key 无效): {e}",
+        }
+    except Exception as e:
+        elapsed_ms = int((time.monotonic() - t_start) * 1000)
+        return {
+            "success": False,
+            "latency_ms": elapsed_ms,
+            "model": body.model,
+            "reply": None,
+            "tokens_used": None,
+            "key_suffix": f"***{body.api_key[-4:]}",
+            "error": f"{type(e).__name__}: {e}",
+        }
+
+
+class LLMConfigSaveRequest(BaseModel):
+    api_key: str
+    model: str = "glm-4.7"
+
+
+@router.post("/api/dashboard/llm-config")
+async def save_llm_config(body: LLMConfigSaveRequest):
+    """
+    将 API Key 和模型设置保存到 .env 文件，并热重载 LLM 客户端。
+    """
+    import re
+
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    env_path = os.path.join(base_dir, ".env")
+
+    if not os.path.isfile(env_path):
+        return {"success": False, "error": ".env 文件不存在"}
+
+    try:
+        with open(env_path, encoding="utf-8") as f:
+            content = f.read()
+        # 替换 API Key
+        if re.search(r"^ZHIPU_API_KEYS=", content, re.MULTILINE):
+            content = re.sub(r"^ZHIPU_API_KEYS=.*$", f"ZHIPU_API_KEYS={body.api_key}", content, flags=re.MULTILINE)
+        else:
+            content += f"\nZHIPU_API_KEYS={body.api_key}\n"
+
+        # 替换模型
+        if re.search(r"^MAIN_CHAT_MODEL=", content, re.MULTILINE):
+            content = re.sub(r"^MAIN_CHAT_MODEL=.*$", f"MAIN_CHAT_MODEL={body.model}", content, flags=re.MULTILINE)
+        else:
+            content += f"\nMAIN_CHAT_MODEL={body.model}\n"
+
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        # 同步更新运行时环境变量
+        os.environ["ZHIPU_API_KEYS"] = body.api_key
+        os.environ["MAIN_CHAT_MODEL"] = body.model
+
+        logger.info(f"LLM 配置已保存 | model: {body.model} | key: ***{body.api_key[-4:]}")
+        return {
+            "success": True,
+            "msg": f"已保存！模型: {body.model} | Key: ***{body.api_key[-4:]}",
+        }
+    except Exception as e:
+        logger.error(f"保存 LLM 配置失败: {e}")
+        return {"success": False, "error": str(e)}

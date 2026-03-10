@@ -114,10 +114,73 @@ class PddApiClient:
         logger.error(f"PDD API | 消息发送最终失败，已重试 {self.max_retries} 次。")
         return False
 
+    async def send_image_message(self, mall_id: str, buyer_id: str, image_url: str) -> bool:
+        """
+        调用拼多多 API 给买家发送图片消息。
+        message_type 必须设为 "image"，content 填图片 URL。
+
+        注意：拼多多要求图片 URL 必须是公网可访问的，
+        或者是通过 pdd.goods.img.upload 上传后获得的 URL。
+        """
+        if not self.client_id or not self.client_secret or not self.access_token:
+            logger.warning("PDD API 凭证未配置，无法发送真实图片消息（已降级为仅日志模式）")
+            return True
+
+        params = {
+            "type": "pdd.pop.cs.message.send",
+            "client_id": self.client_id,
+            "access_token": self.access_token,
+            "timestamp": str(int(time.time())),
+            "data_type": "JSON",
+            "version": "V1",
+            "mall_id": mall_id,
+            "buyer_id": buyer_id,
+            "message_type": "image",
+            "content": image_url,
+        }
+
+        params["sign"] = self._generate_sign(params)
+
+        for attempt in range(self.max_retries):
+            try:
+                if attempt > 0:
+                    delay = 1.0 * (2 ** (attempt - 1))
+                    logger.warning(f"PDD API | 准备重试发送图片，等待 {delay}s...")
+                    await asyncio.sleep(delay)
+
+                logger.info(
+                    f"PDD API | 正在发送图片消息至买家 {buyer_id[:8]}... (尝试 {attempt + 1}/{self.max_retries})"
+                )
+                response = await self._client.post(self.gateway_url, json=params)
+
+                resp_data = response.json()
+                if "error_response" in resp_data:
+                    logger.error(f"PDD API 图片消息错误返回: {resp_data['error_response']}")
+                    # 降级尝试：如果 image 类型不支持，尝试 file 类型
+                    if attempt == self.max_retries - 1:
+                        logger.warning("PDD API | 图片消息失败，降级尝试 file 类型...")
+                        return await self.send_file_message(mall_id, buyer_id, image_url)
+                    continue
+
+                logger.info("PDD API | 图片消息发送成功")
+                return True
+
+            except Exception as e:
+                logger.error(f"PDD API | 图片请求异常(尝试 {attempt + 1}/{self.max_retries}): {e}")
+
+        logger.error(f"PDD API | 图片消息发送最终失败，已重试 {self.max_retries} 次。")
+        return False
+
     async def send_file_message(self, mall_id: str, buyer_id: str, file_url: str) -> bool:
         """
-        调用拼多多 API 给买家发送文件或卡片消息
+        调用拼多多 API 给买家发送文件或卡片消息。
+        自动检测：如果是图片类型 URL，优先走 image 通道。
         """
+        # 自动检测图片类型，优先用 image 消息类型
+        if any(file_url.lower().endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp")):
+            logger.info(f"PDD API | 检测到图片文件，优先使用 image 消息类型 | url: {file_url[-30:]}")
+            return await self.send_image_message(mall_id, buyer_id, file_url)
+
         if not self.client_id or not self.client_secret or not self.access_token:
             logger.warning("PDD API 凭证未配置，无法发送真实文件消息（已降级为仅日志模式）")
             return True
