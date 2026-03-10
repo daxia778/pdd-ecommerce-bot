@@ -3,14 +3,18 @@
 - 同时解析 content 和 reasoning_content
 - glm-4.7/glm-5 显式关闭思维链
 """
+
 import asyncio
 import json
 import os
 import sys
 import time
 
+import httpx
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
+
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
 
 API_KEY = os.environ.get("ZHIPU_API_KEYS", "").split(",")[0].strip()
@@ -18,71 +22,71 @@ BASE_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
 PROMPT = "我想做一个10页的PPT，用于工作汇报，简约大气风格，你们有什么推荐的档位？"
 SYS = "你是云芊艺小店的智小设AI客服，专注PPT设计服务。回复控制在80字以内。"
 
-import httpx
-
 TESTS = [
     # (label, model, extra_body)
-    ("① glm-4.7 免费·关闭思维链",     "glm-4.7",    {"thinking": {"type": "disabled"}}),
-    ("② glm-4.7 免费·开启思维链",     "glm-4.7",    {}),
-    ("③ glm-4-air 付费·轻量",         "glm-4-air",  {}),
-    ("④ glm-4-flash 免费·极速",       "glm-4-flash",{}),
-    ("⑤ glm-5 付费旗舰·关闭思维链",   "glm-5",      {"thinking": {"type": "disabled"}}),
-    ("⑥ glm-5 付费旗舰·开启思维链",   "glm-5",      {}),
+    ("① glm-4.7 免费·关闭思维链", "glm-4.7", {"thinking": {"type": "disabled"}}),
+    ("② glm-4.7 免费·开启思维链", "glm-4.7", {}),
+    ("③ glm-4-air 付费·轻量", "glm-4-air", {}),
+    ("④ glm-4-flash 免费·极速", "glm-4-flash", {}),
+    ("⑤ glm-5 付费旗舰·关闭思维链", "glm-5", {"thinking": {"type": "disabled"}}),
+    ("⑥ glm-5 付费旗舰·开启思维链", "glm-5", {}),
 ]
 
 ROUNDS = 2
+
 
 async def test_once(label, model, extra_body):
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {API_KEY}"}
     payload = {
         "model": model,
         "messages": [{"role": "system", "content": SYS}, {"role": "user", "content": PROMPT}],
-        "temperature": 0.7, "max_tokens": 150, "stream": True,
+        "temperature": 0.7,
+        "max_tokens": 150,
+        "stream": True,
     }
     if extra_body:
         payload.update(extra_body)
-    
+
     t0 = time.monotonic()
     ttft = None
     content_chunks = []
     reasoning_chunks = []
     error = None
-    
+
     try:
-        async with httpx.AsyncClient(timeout=30.0) as c:
-            async with c.stream("POST", BASE_URL, json=payload, headers=headers) as r:
-                if r.status_code != 200:
-                    body = await r.aread()
-                    error = f"HTTP {r.status_code}: {body.decode()[:100]}"
-                else:
-                    async for line in r.aiter_lines():
-                        line = line.strip()
-                        if not line.startswith("data:"):
-                            continue
-                        d = line[5:].strip()
-                        if d == "[DONE]":
-                            break
-                        try:
-                            obj = json.loads(d)
-                            delta = obj.get("choices", [{}])[0].get("delta", {})
-                            ct = delta.get("content", "")
-                            rc = delta.get("reasoning_content", "")
-                            if ct or rc:
-                                if ttft is None:
-                                    ttft = int((time.monotonic() - t0) * 1000)
-                                if ct:
-                                    content_chunks.append(ct)
-                                if rc:
-                                    reasoning_chunks.append(rc)
-                        except json.JSONDecodeError:
-                            continue
+        async with httpx.AsyncClient(timeout=30.0) as c, c.stream("POST", BASE_URL, json=payload, headers=headers) as r:
+            if r.status_code != 200:
+                body = await r.aread()
+                error = f"HTTP {r.status_code}: {body.decode()[:100]}"
+            else:
+                async for line in r.aiter_lines():
+                    line = line.strip()
+                    if not line.startswith("data:"):
+                        continue
+                    d = line[5:].strip()
+                    if d == "[DONE]":
+                        break
+                    try:
+                        obj = json.loads(d)
+                        delta = obj.get("choices", [{}])[0].get("delta", {})
+                        ct = delta.get("content", "")
+                        rc = delta.get("reasoning_content", "")
+                        if ct or rc:
+                            if ttft is None:
+                                ttft = int((time.monotonic() - t0) * 1000)
+                            if ct:
+                                content_chunks.append(ct)
+                            if rc:
+                                reasoning_chunks.append(rc)
+                    except json.JSONDecodeError:
+                        continue
     except Exception as e:
         error = str(e)[:100]
-    
+
     total = int((time.monotonic() - t0) * 1000)
     content_text = "".join(content_chunks)
     reasoning_text = "".join(reasoning_chunks)
-    
+
     # 首个正文 content 的时间（如果有 reasoning 先到，另算）
     return {
         "label": label,
@@ -102,14 +106,14 @@ async def main():
     print(f"   端点: {BASE_URL}")
     print(f"   Key: ***{API_KEY[-8:]}  |  每组 {ROUNDS} 轮")
     print("=" * 100)
-    
+
     summary = {}
-    
+
     for label, model, extra in TESTS:
         print(f"\n{'─'*90}")
         print(f"📡 {label}")
         print(f"{'─'*90}")
-        
+
         results = []
         for r in range(1, ROUNDS + 1):
             print(f"  ▶ R{r}...", end=" ", flush=True)
@@ -118,14 +122,16 @@ async def main():
                 print(f"❌ {res['error']}")
             else:
                 reasoning_tag = f" 🧠思维链={res['reasoning_chars']}字" if res["has_reasoning"] else ""
-                print(f"✅ TTFT={res['ttft_ms']}ms  总耗时={res['total_ms']}ms  "
-                      f"正文={res['content_chars']}字{reasoning_tag}")
+                print(
+                    f"✅ TTFT={res['ttft_ms']}ms  总耗时={res['total_ms']}ms  "
+                    f"正文={res['content_chars']}字{reasoning_tag}"
+                )
                 if r == 1:
                     print(f"     📝 {res['reply']}")
             results.append(res)
             await asyncio.sleep(0.5)
         summary[label] = results
-    
+
     # 汇总
     print("\n\n" + "=" * 110)
     print("📊 汇总对比")
@@ -144,7 +150,7 @@ async def main():
             at = tt = cc = rc = -1
             sr = f"0/{len(results)}"
         print(f"{label:<40} {at:>8}ms {tt:>8}ms {cc:>8} {rc:>8} {sr:>8}")
-    
+
     print("─" * 110)
     print("\n🔑 关键结论:")
     print("   - 思维链开/关对 TTFT 的影响 = 延迟的主要组成")

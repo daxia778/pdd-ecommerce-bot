@@ -308,9 +308,11 @@ class LLMClient:
                     # P6-Fix: 只对支持思维链的模型(glm-4.7/glm-5/glm-z1)关闭 thinking
                     # glm-4-air/flash 无思维链, 传此参数可能导致异常
                     _thinking_models = ("glm-4.7", "glm-5", "glm-z1")
-                    _extra = {"thinking": {"type": "disabled"}} if any(
-                        m in p_config["model"] for m in _thinking_models
-                    ) else {}
+                    _extra = (
+                        {"thinking": {"type": "disabled"}}
+                        if any(m in p_config["model"] for m in _thinking_models)
+                        else {}
+                    )
                     response = await acompletion(
                         model=p_config["model"],
                         messages=full_messages,
@@ -413,9 +415,11 @@ class LLMClient:
 
                     # P6-Fix: 同上，只对有思维链的模型关闭 thinking
                     _thinking_models = ("glm-4.7", "glm-5", "glm-z1")
-                    _extra = {"thinking": {"type": "disabled"}} if any(
-                        m in p_config["model"] for m in _thinking_models
-                    ) else {}
+                    _extra = (
+                        {"thinking": {"type": "disabled"}}
+                        if any(m in p_config["model"] for m in _thinking_models)
+                        else {}
+                    )
                     response = await acompletion(
                         model=p_config["model"],
                         messages=full_messages,

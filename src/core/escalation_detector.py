@@ -7,6 +7,7 @@ P1-Root-Cause-Sweep: 使用 Pydantic BaseModel 校验 LLM JSON 输出，
 """
 
 import json
+import os
 import re
 from typing import Literal
 
@@ -34,13 +35,15 @@ REASON_RULES = [
     (["线下", "上门", "面谈", "见面", "现场"], "offline", "线下服务"),
 ]
 
-import os
 # 读取外部隔离的意图分类 Prompt
-PROMPT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "prompts")
+PROMPT_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "prompts"
+)
 INTENT_PROMPT_PATH = os.path.join(PROMPT_DIR, "intent_classification", "prompt.md")
 
-with open(INTENT_PROMPT_PATH, "r", encoding="utf-8") as f:
+with open(INTENT_PROMPT_PATH, encoding="utf-8") as f:
     INTENT_SYSTEM_PROMPT = f.read()
+
 
 # P1-Root-Cause-Sweep: 使用 Pydantic 模型校验 LLM 返回的 JSON
 class EscalationResult(BaseModel):
