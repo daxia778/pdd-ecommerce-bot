@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     embedding_model: str = "embedding-3"
 
     # ===== 性能配置 =====
-    max_history_length: int = 20
+    max_history_length: int = 40  # 40条(约20轮)
     max_retries: int = 3
 
     # ===== 超时配置 (秒) =====

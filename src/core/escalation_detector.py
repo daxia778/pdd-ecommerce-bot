@@ -35,14 +35,23 @@ REASON_RULES = [
     (["线下", "上门", "面谈", "见面", "现场"], "offline", "线下服务"),
 ]
 
-# 读取外部隔离的意图分类 Prompt
+# 读取外部隔离的意图分类 Prompt（安全加载，文件缺失不会导致崩溃）
 PROMPT_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "prompts"
 )
 INTENT_PROMPT_PATH = os.path.join(PROMPT_DIR, "intent_classification", "prompt.md")
 
-with open(INTENT_PROMPT_PATH, encoding="utf-8") as f:
-    INTENT_SYSTEM_PROMPT = f.read()
+_FALLBACK_INTENT_PROMPT = (
+    "你是一个意图分类器。根据买家消息和AI回复，判断是否需要转人工。"
+    '输出JSON: {"should_escalate": bool, "reason_code": "urgent|bargain|complaint|large_order|offline|other|none", "reason_label": "中文描述"}'
+)
+
+try:
+    with open(INTENT_PROMPT_PATH, encoding="utf-8") as f:
+        INTENT_SYSTEM_PROMPT = f.read()
+except FileNotFoundError:
+    logger.warning(f"⚠️ 意图分类 Prompt 文件不存在: {INTENT_PROMPT_PATH}，使用内置兜底 Prompt")
+    INTENT_SYSTEM_PROMPT = _FALLBACK_INTENT_PROMPT
 
 
 # P1-Root-Cause-Sweep: 使用 Pydantic 模型校验 LLM 返回的 JSON

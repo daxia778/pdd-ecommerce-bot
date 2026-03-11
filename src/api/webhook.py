@@ -28,7 +28,14 @@ from sqlalchemy.orm import Session as DBSession
 
 from config.settings import settings
 from src.api.websocket_manager import manager
-from src.core.content_guardrail import check_ai_output
+from src.core.chat_service import (
+    GREETING_REPLY,
+    check_greeting_fastpath,
+    clean_llm_reply,
+    dedup_history,
+    prepare_system_prompt,
+    process_guardrail_and_escalation,
+)
 from src.core.escalation_detector import analyze as analyze_escalation
 from src.core.llm_client import get_llm_client
 from src.core.rag_engine import get_rag_engine
@@ -40,7 +47,6 @@ from src.services.redis_client import redis_client
 from src.services.task_coordinator import task_coordinator
 from src.utils.background_task_wrapper import catch_background_exceptions
 from src.utils.logger import logger
-from src.utils.prompt_loader import prompt_loader
 from src.utils.safe_task import create_safe_task
 
 router = APIRouter()
@@ -131,42 +137,24 @@ async def _process_chat(
         logger.info(f"清空会话历史 | user_id: {user_id}")
 
     # =========================================================
-    # 极速优化: 问候语快速通道 — 常见打招呼直接秒回, 跳过RAG/LLM
+    # 极速优化: 问候语快速通道 (复用 chat_service)
     # =========================================================
-    GREETING_PATTERNS = {
-        "在吗",
-        "你好",
-        "在不在",
-        "在嘛",
-        "客服",
-        "hi",
-        "hello",
-        "在吗？",
-        "你好呀",
-        "在的吗",
-        "有人吗",
-        "嗨",
-    }
-    msg_stripped = (
-        message.strip().lower().replace("？", "").replace("?", "").replace("！", "").replace("!", "").replace("。", "")
-    )
-    if msg_stripped in GREETING_PATTERNS or (
-        len(msg_stripped) <= 4 and any(g in msg_stripped for g in ["在吗", "你好", "客服", "在不", "有人"])
-    ):
-        greeting_reply = "亲，在的呢！我是云芊艺小店的智小设AI客服，专注PPT/BP/课件定制，请问有什么可以帮您的呀？"
+    if check_greeting_fastpath(message):
         await session_manager.add_message_async_safe(user_id, "user", message, db=db, platform=platform)
-        await session_manager.add_message_async_safe(user_id, "assistant", greeting_reply, db=db, platform=platform)
+        await session_manager.add_message_async_safe(user_id, "assistant", GREETING_REPLY, db=db, platform=platform)
         history = await session_manager.get_history_async_safe(user_id, db=db)
         logger.info(f"⚡ 问候语快速通道命中 | user: {user_id} | msg: {message}")
         return {
-            "reply": greeting_reply,
+            "reply": GREETING_REPLY,
             "history_length": len(history),
             "escalated": False,
             "escalation_reason": "",
         }
 
-    # P1-2 (P0-3 修复): 语义缓存 - 改用 user_id + message 组合 key，避免不同会话上下文串台
-    hash_obj = hashlib.md5(f"{user_id}:{message}".encode()).hexdigest()
+    # P1-6: 缓存 key 加入最近历史摘要，避免多轮对话中相同消息返回错误缓存
+    recent_history = await session_manager.get_history_async_safe(user_id, db=db)
+    last_ctx = recent_history[-1]["content"][:50] if recent_history else ""
+    hash_obj = hashlib.md5(f"{user_id}:{last_ctx}:{message}".encode()).hexdigest()
     cache_key = f"qa_cache:{hash_obj}"
     try:
         cached_reply = None
@@ -204,34 +192,29 @@ async def _process_chat(
 
     rag_context = rag.build_context(retrieved_docs)
 
-    # L3: 模块化 Prompt 组装（v3.0 架构）
-    system_prompt = prompt_loader.assemble_system_prompt(
-        rag_context=rag_context if rag_context else "（知识库暂未入库，请凭经验回答）"
-    )
-
     # === P0-Fix-2: 从内存/DB 获取历史（异步安全读取）===
     full_history = await session_manager.get_history_async_safe(user_id, db=db)
-
-    # P7-Memory: 放宽历史轮数 4→20，避免 AI 遗忘客户之前提供的关键信息（如页数、用途）
-    # glm-4-air 支持 128K 上下文窗口，20轮(≈40条消息)完全够用
-    MAX_HISTORY_FOR_LLM = 20
+    MAX_HISTORY_FOR_LLM = 40  # 40条(约20轮) = 设置的最大条数
     history = full_history[-MAX_HISTORY_FOR_LLM:] if len(full_history) > MAX_HISTORY_FOR_LLM else full_history
 
-    # P2: Vision API 支持
+    # P1-4: 非流式补上反复读机保护
+    history, duplicate_count = dedup_history(history, user_id)
+
+    # 确保最后一条消息是 user 的
+    if history and history[-1]["role"] != "user":
+        history.append({"role": "user", "content": message})
+
     if image_url and history and history[-1]["role"] == "user":
         history[-1]["content"] = [
             {"type": "text", "text": history[-1]["content"]},
             {"type": "image_url", "image_url": {"url": image_url}},
         ]
 
+    system_prompt = prepare_system_prompt(rag_context, message, duplicate_count)
+
     logger.info(
         f"处理消息 | user: {user_id} | platform: {platform} | 消息: {message[:40]} | RAG命中: {len(retrieved_docs)} 条"
     )
-
-    # === 预处理：Slot Filling 检查（检测 PPT 生成核心要素）===
-    ppt_keywords = prompt_loader.get_ppt_keywords()
-    if any(k in message for k in ppt_keywords) and "[[CREATE_ORDER" not in message:
-        system_prompt += "\n\n" + prompt_loader.get_slot_filling_hint()
 
     _llm_start = time.monotonic()
     _is_fallback = False
@@ -268,23 +251,12 @@ async def _process_chat(
     )
     final_history = await session_manager.get_history_async_safe(user_id, db=db)
 
-    # === P8-Policy: 订单创建权限已关闭 ===
-    # AI 当前仅有"讲解/收集需求/报价"权限，不允许创建订单。
-    # 如果 LLM 仍然输出了 [[CREATE_ORDER:...]]，仅做清除，不执行。
-    if "[[CREATE_ORDER:" in reply:
-        logger.warning(f"⚠️ LLM 输出了 CREATE_ORDER 指令但权限已关闭，仅清除 | user: {user_id}")
-        reply = re.sub(r"\[\[CREATE_ORDER:.*?\]\]", "", reply, flags=re.DOTALL).strip()
+    reply = clean_llm_reply(reply)
 
-    # === L2: 内容安全门网 (Guardrail) 拦截 ===
-    guardrail_result = check_ai_output(reply)
-    if guardrail_result.blocked:
-        # 被拦截，使用安全替换词
-        reply = guardrail_result.safe_reply
-        # 主动触发升级拦截（guardrail 拦截是同步的，必须立即处理）
-        escalated = True
-        reason = "guardrail_blocked"
-        reason_label = "安全红线拦截"
-        logger.warning(f"Guardrail 拦截 | 用户: {user_id} | 触发规则: {guardrail_result.triggered_rules}")
+    reply, escalated, reason = process_guardrail_and_escalation(reply, message)
+    reason_label = "安全红线拦截" if reason == "guardrail_blocked" else ""
+
+    if escalated and reason == "guardrail_blocked":
         try:
             await run_in_db_thread(
                 db_service.create_escalation,
@@ -296,42 +268,34 @@ async def _process_chat(
                 platform=platform,
             )
             await run_in_db_thread(db_service.update_session, db, user_id=user_id, status="escalated")
-            logger.info(f"人工升级已标记 | user_id: {user_id} | reason: {reason}")
         except Exception as e:
-            logger.error(f"升级记录写入失败 | user_id: {user_id} | {e}")
+            logger.error(f"升级记录写入失败 | {e}")
     else:
-        escalated = False
-        reason_label = ""
-
         # === P3-Speed: 升级检测改为 fire-and-forget，不阻塞用户响应 ===
-        # 升级检测（尤其是 LLM 慢路径）可能花 3-8 秒，用户不应该等待
         from src.core.escalation_detector import ESCALATION_KEYWORDS, REASON_RULES
 
-        HIGH_CONFIDENCE_KEYWORDS = ["投诉", "骗", "差评", "退款", "举报", "维权", "消协", "12315", "垃圾", "报警"]
-
         ai_has_escalation = any(kw in reply for kw in ESCALATION_KEYWORDS)
-        user_has_high_confidence = any(kw in message for kw in HIGH_CONFIDENCE_KEYWORDS)
         user_has_ambiguous = any(any(kw in message for kw in keywords) for keywords, _, _ in REASON_RULES)
 
-        if ai_has_escalation or user_has_high_confidence or user_has_ambiguous:
-            # 有升级信号 → 后台异步处理，不阻塞响应
+        if escalated or ai_has_escalation or user_has_ambiguous:
+
             async def _background_escalation():
                 try:
                     esc_result = await analyze_escalation(message, reply)
-                    if esc_result["should_escalate"]:
+                    if esc_result["should_escalate"] or escalated:
+                        final_reason = esc_result["reason"] if esc_result["should_escalate"] else reason
                         await run_in_db_thread(
                             db_service.create_escalation,
                             db=db,
                             user_id=user_id,
                             trigger_message=message,
                             ai_reply=reply,
-                            reason=esc_result["reason"],
+                            reason=final_reason,
                             platform=platform,
                         )
                         await run_in_db_thread(db_service.update_session, db, user_id=user_id, status="escalated")
-                        logger.info(f"后台升级检测完成 | user_id: {user_id} | reason: {esc_result['reason']}")
                 except Exception as e:
-                    logger.error(f"后台升级检测异常 | user_id: {user_id} | {e}")
+                    logger.error(f"后台升级检测异常 | {e}")
 
             create_safe_task(_background_escalation(), name=f"escalation-{user_id}")
 
@@ -395,33 +359,13 @@ async def _process_chat_stream(
         session_manager.clear_session(user_id)
 
     # =========================================================
-    # 极速优化: 问候语快速通道 — 常见打招呼直接秒回, 跳过RAG/LLM
+    # 极速优化: 问候语快速通道 (复用 chat_service)
     # =========================================================
-    GREETING_PATTERNS = {
-        "在吗",
-        "你好",
-        "在不在",
-        "在嘛",
-        "客服",
-        "hi",
-        "hello",
-        "在吗？",
-        "你好呀",
-        "在的吗",
-        "有人吗",
-        "嗨",
-    }
-    msg_stripped = (
-        message.strip().lower().replace("？", "").replace("?", "").replace("！", "").replace("!", "").replace("。", "")
-    )
-    if msg_stripped in GREETING_PATTERNS or (
-        len(msg_stripped) <= 4 and any(g in msg_stripped for g in ["在吗", "你好", "客服", "在不", "有人"])
-    ):
-        greeting_reply = "亲，在的呢！我是云芊艺小店的智小设AI客服，专注PPT/BP/课件定制，请问有什么可以帮您的呀？"
+    if check_greeting_fastpath(message):
         await session_manager.add_message_async_safe(user_id, "user", message, db=db, platform=platform)
-        await session_manager.add_message_async_safe(user_id, "assistant", greeting_reply, db=db, platform=platform)
+        await session_manager.add_message_async_safe(user_id, "assistant", GREETING_REPLY, db=db, platform=platform)
         logger.info(f"⚡ 问候语快速通道(SSE) | user: {user_id} | msg: {message}")
-        yield f"data: {json.dumps({'chunk': greeting_reply, 'done': True, 'escalated': False, 'escalation_reason': '', 'diagnostics': {'model': 'greeting_fastpath', 'provider': 'local', 'backend_ttft_ms': 0, 'backend_total_ms': 0, 'llm_ttft_ms': None, 'llm_total_ms': None, 'streaming': False, 'chunk_count': 1, 'char_count': len(greeting_reply), 'rag_used': False, 'rag_docs_count': 0, 'guardrail_blocked': False, 'guardrail_rules': [], 'greeting_fastpath': True}})}\n\n"
+        yield f"data: {json.dumps({'chunk': GREETING_REPLY, 'done': True, 'escalated': False, 'escalation_reason': '', 'diagnostics': {'model': 'greeting_fastpath', 'provider': 'local', 'backend_ttft_ms': 0, 'backend_total_ms': 0, 'llm_ttft_ms': None, 'llm_total_ms': None, 'streaming': False, 'chunk_count': 1, 'char_count': len(GREETING_REPLY), 'rag_used': False, 'rag_docs_count': 0, 'guardrail_blocked': False, 'guardrail_rules': [], 'greeting_fastpath': True}})}\n\n"
         return
     retrieved_docs_task = asyncio.create_task(rag.retrieve_async(query=message, top_k=3))
     add_user_msg_task = asyncio.create_task(
@@ -430,45 +374,15 @@ async def _process_chat_stream(
     retrieved_docs, _ = await asyncio.gather(retrieved_docs_task, add_user_msg_task)
 
     rag_context = rag.build_context(retrieved_docs)
-    # L3: 模块化 Prompt 组装（v3.0 架构）
-    system_prompt = prompt_loader.assemble_system_prompt(
-        rag_context=rag_context if rag_context else "（知识库暂未入库，请凭经验回答）"
-    )
-
     full_history = await session_manager.get_history_async_safe(user_id, db=db)
-    # P7-Memory: 统一历史窗口为20轮，与非流式路径一致
-    MAX_HISTORY_FOR_LLM = 20
+    MAX_HISTORY_FOR_LLM = 40
     history = full_history[-MAX_HISTORY_FOR_LLM:] if len(full_history) > MAX_HISTORY_FOR_LLM else full_history
 
-    # =========================================================
-    # 反复读机保护 v2：检测所有重复的 assistant 内容（含非连续）
-    # 模式：[assistant: X, user: Y, assistant: X] 也要去重
-    # =========================================================
-    seen_assistant_contents = set()
-    deduped_history = []
-    duplicate_count = 0
-    for msg in history:
-        if msg["role"] == "assistant":
-            content_key = msg["content"].strip()[:200]  # 前200字作为指纹
-            if content_key in seen_assistant_contents:
-                duplicate_count += 1
-                # 替换为简短标记，而非完全删除（保持对话轮次结构完整）
-                deduped_history.append({"role": "assistant", "content": "[重复回复已省略]"})
-                continue
-            seen_assistant_contents.add(content_key)
-        deduped_history.append(msg)
-    history = deduped_history
+    history, duplicate_count = dedup_history(history, user_id)
 
-    if duplicate_count > 0:
-        logger.warning(f"⚠️ 反复读机保护: 检测到 {duplicate_count} 条重复 assistant，已替换 | user: {user_id}")
-        system_prompt += "\n\n【紧急系统提示】你刚才的回复和之前一模一样（已被系统标记为[重复回复已省略]），这说明你没有认真理解客户的最新问题。现在请你：\n1. 仔细阅读客户最后一条消息\n2. 给出一个完全不同的、有针对性的新回答\n3. 绝对不要重复之前说过的任何一句话"
-
-    # 确保最后一条消息是 user 的（如果不是就额外追加）
     if history and history[-1]["role"] != "user":
-        logger.warning(f"⚠️ 历史最后一条不是 user 消息，追加当前消息 | user: {user_id}")
         history.append({"role": "user", "content": message})
 
-    # 调试日志：记录发送给 LLM 的历史摘要
     logger.info(
         f"LLM 输入 | user: {user_id} | history: {len(history)} 条 | 去重: {duplicate_count} | 最后user: {message[:50]}"
     )
@@ -479,9 +393,7 @@ async def _process_chat_stream(
             {"type": "image_url", "image_url": {"url": image_url}},
         ]
 
-    ppt_keywords = prompt_loader.get_ppt_keywords()
-    if any(k in message for k in ppt_keywords) and "[[CREATE_ORDER" not in message:
-        system_prompt += "\n\n" + prompt_loader.get_slot_filling_hint()
+    system_prompt = prepare_system_prompt(rag_context, message, duplicate_count)
 
     # 通知前端正在生成
     yield f"data: {json.dumps({'chunk': '', 'done': False})}\n\n"
@@ -549,33 +461,18 @@ async def _process_chat_stream(
 
         response_time_ms = int((time.monotonic() - t_start) * 1000)
 
-        # 从 complete_reply 中去掉内部指令（用于存储的干净文本）
-        clean_reply = re.sub(r"\[\[CREATE_ORDER:.*?\]\]", "", complete_reply, flags=re.DOTALL).strip()
-
-        # 生成完成后处理 Guardrail + Escalation 并写库
-        guardrail_result = check_ai_output(clean_reply)
-        is_escalated = guardrail_result.blocked
-        escalation_reason = "guardrail_blocked" if is_escalated else ""
-
-        # 升级检测：只做快速路径（关键词判断），跳过慢速 LLM 调用以避免阻塞前端
-        # 慢速路径的 LLM 分析放到后台任务中异步执行
-        if not is_escalated and any(
-            kw in message for kw in ["投诉", "骗", "差评", "退款", "举报", "维权", "人工", "真人"]
-        ):
-            is_escalated = True
-            escalation_reason = "keyword_escalation"
+        safe_complete_reply = clean_llm_reply(complete_reply)
+        _, is_escalated, escalation_reason = process_guardrail_and_escalation(safe_complete_reply, message)
 
         await session_manager.add_message_async_safe(
             user_id, "assistant", complete_reply, db=db, platform=platform, response_time_ms=response_time_ms
         )
 
-        # 结束包：包含诊断元数据
         done_payload = {
             "chunk": "",
             "done": True,
             "escalated": is_escalated,
             "escalation_reason": escalation_reason,
-            # === 诊断元数据 (供前端测试面板使用) ===
             "diagnostics": {
                 "model": llm_meta.get("model", "unknown"),
                 "provider": llm_meta.get("provider", "unknown"),
@@ -588,15 +485,14 @@ async def _process_chat_stream(
                 "char_count": len(complete_reply),
                 "rag_used": bool(rag_context),
                 "rag_docs_count": len(retrieved_docs) if retrieved_docs else 0,
-                "guardrail_blocked": guardrail_result.blocked,
-                "guardrail_rules": guardrail_result.triggered_rules,
+                "guardrail_blocked": is_escalated and escalation_reason == "guardrail_blocked",
+                "guardrail_rules": [],  # Optional to pass back specific rules
                 "greeting_fastpath": False,
                 "attempt_count": llm_meta.get("attempt_count", 1),
             },
         }
         yield f"data: {json.dumps(done_payload)}\n\n"
 
-        # 触发前端看版刷新
         await manager.broadcast({"event": "update", "user_id": user_id})
 
     except Exception as e:
