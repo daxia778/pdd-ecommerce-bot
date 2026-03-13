@@ -1,7 +1,7 @@
 <template>
   <div class="h-full flex gap-4 p-4 overflow-hidden">
     <!-- Left: Mobile Phone Container -->
-    <div class="w-full lg:w-[380px] h-[750px] max-h-full bg-white rounded-[2.5rem] shadow-2xl border-[8px] border-gray-900 overflow-hidden flex flex-col relative ring-4 ring-gray-200 shrink-0 mx-auto lg:mx-0">
+    <div class="w-full lg:w-[380px] h-[750px] max-h-full card-enterprise overflow-hidden flex flex-col shrink-0 mx-auto lg:mx-0">
 
       <!-- Dynamic Island Notch -->
       <div class="h-8 w-full absolute top-0 z-30 flex justify-center pointer-events-none mt-2">
@@ -16,7 +16,7 @@
       <!-- App Header -->
       <div class="pt-12 pb-3 px-4 bg-gray-50 flex items-center justify-between border-b z-10 sticky top-0 shrink-0">
         <div class="flex items-center gap-3">
-            <div class="w-10 h-10 bg-gradient-to-br from-[#FF574D] to-[#E02E24] rounded-full flex items-center justify-center shadow-sm">
+            <div class="w-10 h-10 bg-gray-50 border border-gray-200 rounded-md flex items-center justify-center shadow-sm">
               <span class="text-white text-lg font-black tracking-tighter">多</span>
             </div>
             <div>
@@ -25,7 +25,7 @@
             </div>
         </div>
         <div class="flex items-center gap-2">
-            <button @click="clearChat" class="text-[10px] bg-gray-200 text-gray-600 px-2 py-1 rounded-full font-bold hover:bg-gray-300" title="清空历史">清空</button>
+            <button @click="clearChat" class="text-xs bg-white border border-gray-300 text-gray-600 px-3 py-1 rounded-md font-medium hover:bg-gray-50" title="清空历史">清空</button>
         </div>
       </div>
 
@@ -34,8 +34,8 @@
 
         <!-- Welcome Message -->
         <div class="flex items-start gap-2 max-w-[85%]">
-            <div class="w-8 h-8 rounded-full bg-gradient-to-br from-[#FF574D] to-[#E02E24] flex items-center justify-center flex-shrink-0 shadow-sm text-white font-bold text-xs mt-1">小设</div>
-            <div class="bg-white p-3 rounded-2xl rounded-tl-sm shadow-sm border border-gray-100 relative">
+            <div class="w-8 h-8 rounded-full bg-gray-200 border border-gray-300 flex items-center justify-center flex-shrink-0 text-gray-600 font-semibold text-xs mt-1">系</div>
+            <div class="bg-[#F2F4F7] p-3 rounded-lg rounded-tl-sm">
                 <p class="text-[13px] text-gray-800 leading-relaxed font-medium">亲，在的呢！我是云芊艺小店的智小设AI客服，专注PPT/BP/课件定制，请问有什么可以帮您的呀？</p>
             </div>
         </div>
@@ -46,13 +46,13 @@
 
             <div class="flex items-start gap-2 max-w-[85%]" :class="msg.role === 'user' ? 'flex-row-reverse' : ''">
                 <!-- Avatar -->
-                <div v-if="msg.role !== 'user'" class="w-8 h-8 rounded-full bg-gradient-to-br from-[#FF574D] to-[#E02E24] flex items-center justify-center flex-shrink-0 shadow-sm text-white font-bold text-xs mt-1">小设</div>
-                <div v-else class="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center flex-shrink-0 shadow-sm text-white font-bold text-xs mt-1">我</div>
+                <div v-if="msg.role !== 'user'" class="w-8 h-8 rounded-full bg-gray-200 border border-gray-300 flex items-center justify-center flex-shrink-0 text-gray-600 font-semibold text-xs mt-1">系</div>
+                <div v-else class="w-8 h-8 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center flex-shrink-0 text-gray-500 font-semibold text-xs mt-1">客</div>
 
                 <!-- Bubble -->
                 <div :class="[
-                    'p-3 rounded-2xl shadow-sm relative',
-                    msg.role === 'user' ? 'bg-[#E02E24] text-white rounded-tr-sm shadow-md shadow-red-500/20' : 'bg-white rounded-tl-sm border border-gray-100 flex flex-col',
+                    'p-3 rounded-lg shadow-sm border',
+                    msg.role === 'user' ? 'bg-[#465FFF] text-white rounded-tr-sm' : 'bg-[#F2F4F7] rounded-tl-sm flex flex-col',
                     msg.error ? 'border-red-300 bg-red-50 text-red-700' : ''
                 ]">
                     <p class="text-[13px] leading-relaxed font-medium whitespace-pre-wrap word-break">{{ msg.displayContent || msg.content }}</p>
@@ -61,7 +61,7 @@
                     <span v-if="msg.isTyping" class="inline-block w-1.5 h-3.5 bg-gray-400 ml-1 animate-pulse align-middle"></span>
 
                     <!-- Escalation Label -->
-                    <div v-if="msg.escalated && !msg.isTyping" class="mt-2 bg-red-50 text-red-600 text-[10px] px-2 py-1 rounded-md font-bold flex items-center gap-1 border border-red-100">
+                    <div v-if="msg.escalated && !msg.isTyping" class="mt-2 text-red-600 text-[10px] font-medium flex items-center gap-1">
                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
                         人工升级: {{ msg.escalation_reason }}
                     </div>
@@ -81,8 +81,8 @@
 
         <!-- Waiting Indicator: only show before AI message bubble is created -->
         <div v-if="loading && !messages.some(m => m.isTyping)" class="flex justify-start items-center gap-2 max-w-[85%]">
-             <div class="w-8 h-8 rounded-full bg-gradient-to-br from-[#FF574D] to-[#E02E24] flex items-center justify-center flex-shrink-0 text-white font-bold text-xs mt-1">小设</div>
-             <div class="bg-white p-3 rounded-2xl rounded-tl-sm shadow-sm border border-gray-100 flex items-center gap-1 h-10">
+             <div class="w-8 h-8 rounded-full bg-gray-200 border border-gray-300 flex items-center justify-center flex-shrink-0 text-gray-600 font-semibold text-xs mt-1">系</div>
+             <div class="bg-[#F2F4F7] p-3 rounded-lg rounded-tl-sm flex items-center gap-1 h-10">
                  <span class="text-[11px] font-bold text-gray-400 mr-2">正在输入</span>
                  <div class="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div>
                  <div class="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.15s"></div>
@@ -94,14 +94,14 @@
 
       <!-- Quick Actions -->
       <div class="bg-gray-50 border-t px-2 py-2 shrink-0 flex gap-2 overflow-x-auto scrollbar-hide">
-         <button v-for="tag in presetTags" :key="tag" @click="inputMsg = tag" class="shrink-0 text-[10px] whitespace-nowrap bg-white border border-gray-200 text-gray-600 px-2.5 py-1.5 rounded-full hover:bg-gray-50 hover:border-gray-300 transition-colors font-medium shadow-sm">
+         <button v-for="tag in presetTags" :key="tag" @click="inputMsg = tag" class="shrink-0 text-xs whitespace-nowrap bg-white border border-gray-200 text-gray-600 px-3 py-1.5 rounded-md hover:bg-gray-50 transition-colors font-medium">
              {{ tag }}
          </button>
       </div>
 
       <!-- Input Area -->
       <div class="p-3 bg-gray-50 border-t flex items-end gap-2 shrink-0">
-          <div class="flex-1 bg-white border border-gray-200 rounded-2xl flex items-end overflow-hidden shadow-sm focus-within:ring-2 focus-within:ring-[#E02E24]/20 focus-within:border-[#E02E24] transition-all">
+          <div class="flex-1 bg-white border border-gray-300 rounded-md flex items-end overflow-hidden focus-within:border-gray-500 transition-all">
               <textarea
                   v-model="inputMsg"
                   @keydown.enter.prevent="sendMessage"
@@ -111,7 +111,7 @@
               ></textarea>
           </div>
           <button @click="sendMessage" :disabled="!inputMsg.trim() || loading || isTypingRender"
-              class="p-2.5 bg-[#E02E24] text-white rounded-full shadow-md shadow-red-500/30 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-red-700 transition-colors flex-shrink-0">
+              class="p-2.5 bg-gray-800 text-white rounded-md shadow-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-900 transition-colors flex-shrink-0">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
           </button>
       </div>
@@ -121,7 +121,7 @@
     <div class="hidden lg:flex flex-col w-[300px] gap-4 shrink-0 h-full overflow-hidden">
 
       <!-- Concurrent Test Panel -->
-      <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 shrink-0">
+      <div class="card-enterprise p-4 shrink-0">
           <div class="flex justify-between items-center mb-3">
               <h2 class="font-bold text-gray-800 flex items-center text-sm">
                  <span class="text-xl mr-2">🚀</span> 极限并发压测
@@ -130,7 +130,7 @@
           <p class="text-[10px] text-gray-500 mb-3 leading-relaxed">一键模拟多个买家针对同款商品瞬间发起询单，测试底层 <strong>LLM熔断、SQLite锁争用及异步并发能力</strong>。</p>
 
           <button @click="runConcurrentTest" :disabled="isTesting"
-              class="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold py-2.5 rounded-xl text-sm shadow-md shadow-blue-500/30 transition-all flex justify-center items-center gap-2 disabled:opacity-75 disabled:cursor-not-allowed">
+              class="w-full btn-primary font-medium py-2.5 flex justify-center items-center gap-2 disabled:opacity-75 disabled:cursor-not-allowed">
               <template v-if="!isTesting">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
                   发起 5 并发请求
@@ -155,7 +155,7 @@
       </div>
 
       <!-- AI Requirement Extraction Panel -->
-      <div class="bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col flex-1 overflow-hidden min-h-0">
+      <div class="card-enterprise flex flex-col flex-1 overflow-hidden min-h-0">
         <div class="p-4 border-b flex justify-between items-center bg-purple-50/50 shrink-0">
           <h2 class="font-bold text-purple-800 flex items-center text-sm">
             <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
@@ -164,7 +164,7 @@
           <span
             @click="triggerExtraction(false)"
             :class="[
-              'text-[9px] px-2 py-1 rounded-full font-bold uppercase tracking-wider cursor-pointer transition-all',
+              'text-[10px] px-2 py-1 rounded-md font-medium cursor-pointer transition-all border',
               isExtracting
                 ? 'bg-purple-200 text-purple-700 animate-pulse'
                 : 'bg-purple-100 text-purple-600 hover:bg-purple-200 hover:shadow-sm'
@@ -178,14 +178,13 @@
 
             <div v-if="localReqData.topic || localReqData.pages" class="space-y-4">
                <!-- Progress Bar -->
-               <div class="bg-gray-50 p-4 rounded-xl border border-gray-100">
+               <div class="bg-gray-50 p-4 border-b border-gray-100">
                   <div class="flex justify-between items-center mb-2">
-                    <span class="text-xs font-bold text-gray-600 flex items-center"><span class="w-1.5 h-1.5 bg-purple-500 rounded-full mr-1.5 animate-pulse"></span>字段提纯度</span>
+                    <span class="text-xs font-semibold text-gray-600 flex items-center">提取完成度</span>
                     <span class="text-xs font-black text-purple-600">{{ completionRate }}%</span>
                   </div>
-                  <div class="w-full bg-gray-200 rounded-full h-2 overflow-hidden shadow-inner">
-                    <div class="bg-gradient-to-r from-purple-400 to-purple-600 h-2 rounded-full transition-all duration-700 ease-out shadow-[0_0_8px_rgba(168,85,247,0.4)] relative" :style="`width: ${completionRate}%`">
-                      <div class="absolute inset-0 bg-white/20 w-full rounded-full animate-[shimmer_2s_infinite]"></div>
+                  <div class="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                    <div class="bg-gray-600 h-2 rounded-full transition-all duration-700 ease-out" :style="`width: ${completionRate}%`">
                     </div>
                   </div>
                </div>
@@ -207,13 +206,13 @@
             </div>
 
             <div v-else class="flex flex-col items-center justify-center h-full pt-10 text-center">
-                 <div class="w-16 h-16 bg-purple-50 rounded-xl flex items-center justify-center mx-auto mb-4 text-purple-400">
+                 <div class="w-16 h-16 bg-gray-50 border border-gray-200 rounded-lg flex items-center justify-center mx-auto mb-4 text-gray-400">
                     <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
                  </div>
                  <p class="font-bold text-gray-700 mb-2">需求尚不明确</p>
                  <p class="text-[11px] text-gray-400 mb-6 leading-relaxed">左侧对话互动后，<br/>AI将自动提纯要素</p>
-                 <button v-if="messages.length > 0" @click="triggerExtraction(false)" class="bg-gray-50 text-purple-600 border border-purple-200 px-4 py-2 rounded-xl text-xs font-bold hover:bg-purple-50 transition-colors mx-auto">
-                    尝试提取需求
+                 <button v-if="messages.length > 0" @click="triggerExtraction(false)" class="bg-white text-gray-700 border border-gray-300 px-4 py-2 rounded-md text-xs font-medium hover:bg-gray-50 transition-colors mx-auto">
+                    尝试重新提取
                  </button>
             </div>
         </div>

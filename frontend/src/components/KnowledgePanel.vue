@@ -1,6 +1,6 @@
 <template>
-  <div class="space-y-6">
-      <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+  <div class="space-y-6 p-6">
+      <div class="bg-white rounded-2xl border border-gray-200 overflow-hidden">
           <div class="p-6 border-b flex justify-between items-center bg-gray-50/50">
               <h2 class="text-xl font-black text-gray-800 flex items-center">
                   <svg class="w-6 h-6 text-blue-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -10,12 +10,12 @@
               </h2>
               <div class="flex items-center gap-2">
                   <button @click="showImport = !showImport"
-                      class="bg-green-600 text-white px-4 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-green-200 hover:bg-green-700 transition-all flex items-center gap-1.5">
+                      class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm hover:bg-green-700 transition-all flex items-center gap-1.5">
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
                       批量导入
                   </button>
                   <button @click="showAddKnowledge = true"
-                      class="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-blue-200 hover:bg-blue-700 transition-all">+ 新增标准规则</button>
+                      class="bg-[#465FFF] text-white px-5 py-2 rounded-lg text-sm font-bold shadow-sm hover:bg-[#3B50E0] transition-all">+ 新增标准规则</button>
               </div>
           </div>
 

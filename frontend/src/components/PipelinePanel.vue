@@ -1,7 +1,7 @@
 <template>
-  <div class="space-y-6">
+  <div class="space-y-6 p-6">
     <!-- DLQ Monitor Card -->
-    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+    <div class="bg-white rounded-2xl border border-gray-200 overflow-hidden">
       <div class="p-5 border-b flex justify-between items-center">
         <h3 class="text-sm font-bold text-gray-700 flex items-center gap-2">
           <span class="w-2 h-2 rounded-full" :class="dlqHealthColor"></span>
@@ -56,10 +56,10 @@
     </div>
 
     <!-- Header -->
-    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+    <div class="bg-white rounded-2xl border border-gray-200 overflow-hidden">
       <div class="p-6 border-b flex justify-between items-center">
         <h2 class="text-xl font-bold text-gray-800 flex items-center">
-          <svg class="w-6 h-6 text-indigo-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-6 h-6 text-[#465FFF] mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
           </svg>
           PPT 订单工作台
@@ -91,7 +91,7 @@
 
         <div v-else class="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div v-for="order in store.orders" :key="order.id"
-            :class="['border border-gray-100 rounded-2xl overflow-hidden shadow-sm transition-all duration-300 hover:shadow-md hover:-translate-y-1 group relative', getCardClass(order.status)]">
+            :class="['border border-gray-200 rounded-xl overflow-hidden shadow-sm transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 group relative', getCardClass(order.status)]">
 
             <!-- Colored Left Border based on status -->
             <div :class="['absolute top-0 bottom-0 left-0 w-1.5', getBorderClass(order.status)]"></div>
@@ -114,7 +114,7 @@
               <div class="flex justify-between items-center mb-3">
                 <p class="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-gray-400"></span>需求摘要</p>
                 <button @click="copyRequirement(order)"
-                  class="text-[10px] font-bold text-indigo-500 bg-indigo-50 px-2 py-1 rounded hover:bg-indigo-100 hover:text-indigo-700 flex items-center gap-1 transition-colors">
+                  class="text-[10px] font-bold text-[#465FFF] bg-[#ecf3ff] px-2 py-1 rounded hover:bg-[#dde9ff] hover:text-[#3641F5] flex items-center gap-1 transition-colors">
                   <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                   </svg>
@@ -147,7 +147,7 @@
               <!-- 待接单 -->
               <button v-if="order.status === 'req_fixed'"
                 @click="handleClaim(order.id)"
-                class="bg-indigo-600 text-white px-4 py-2 rounded-xl text-xs font-black shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all flex items-center gap-1.5">
+                class="bg-[#465FFF] text-white px-4 py-2 rounded-xl text-xs font-black shadow-sm hover:bg-[#3641F5] transition-all flex items-center gap-1.5">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M7 11.5V14m0-2.5v-6a1.5 1.5 0 113 0m-3 6a1.5 1.5 0 00-3 0v2a7.5 7.5 0 0015 0v-5a1.5 1.5 0 00-3 0m-6-3V11m0-5.5v-1a1.5 1.5 0 013 0v1m0 0V11m0-5.5a1.5 1.5 0 013 0v3m0 0V11" />
                 </svg>

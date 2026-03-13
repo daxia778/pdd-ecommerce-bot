@@ -1,5 +1,5 @@
 <template>
-  <div class="space-y-6">
+  <div class="space-y-6 p-6">
     <!-- Overall Health Banner -->
     <div :class="['rounded-2xl shadow-sm border overflow-hidden transition-all', overallBannerClass]">
       <div class="p-6 flex items-center justify-between">
@@ -14,7 +14,7 @@
         </div>
         <button @click="refresh"
           :disabled="loading"
-          class="px-4 py-2 bg-white/80 border border-gray-200 rounded-xl text-xs font-bold text-gray-600 hover:bg-white transition-all flex items-center gap-1.5">
+          class="px-4 py-2 bg-white/80 border border-gray-200 rounded-2xl text-xs font-bold text-gray-600 hover:bg-white transition-all flex items-center gap-1.5">
           <span :class="loading ? 'animate-spin' : ''">↻</span>
           刷新
         </button>
@@ -22,7 +22,7 @@
     </div>
 
     <!-- Pipeline Flow Visualization -->
-    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
       <div class="p-5 border-b bg-gray-50/50">
         <h3 class="text-sm font-bold text-gray-700 flex items-center gap-2">
           <span class="text-base">🔗</span>
@@ -56,7 +56,7 @@
     </div>
 
     <!-- Detailed Component Grid -->
-    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
       <div class="p-5 border-b">
         <h3 class="text-sm font-bold text-gray-700 flex items-center gap-2">
           <span class="text-base">📊</span>
@@ -67,7 +67,7 @@
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           <div v-for="comp in store.systemHealth.components" :key="comp.key"
             @click="openConfig(comp.key)"
-            :class="['rounded-xl border p-5 transition-all duration-300 hover:shadow-md cursor-pointer', getCardClass(comp.status)]">
+            :class="['rounded-2xl border p-5 transition-all duration-300 hover:shadow-md cursor-pointer', getCardClass(comp.status)]">
 
             <div class="flex items-center justify-between mb-3">
               <div class="flex items-center gap-2">

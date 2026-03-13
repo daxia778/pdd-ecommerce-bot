@@ -1,106 +1,88 @@
 <template>
-  <div class="flex flex-col lg:flex-row gap-4 h-full w-full">
-    <!-- Left: Session List -->
-    <div class="w-full lg:w-[280px] flex flex-col h-full shrink-0">
-      <div class="bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col h-full overflow-hidden">
-        <div class="p-4 border-b flex justify-between items-center">
-          <h2 class="font-bold text-gray-800 flex items-center text-sm">
-            <span class="w-1.5 h-3.5 bg-blue-600 rounded-sm mr-2"></span>
-            实时对话队列
+  <div class="flex h-full w-full bg-gray-50 p-4 md:p-6 gap-6">
+    <!-- Left: Session List (Card) -->
+    <div class="w-full lg:w-[320px] flex flex-col h-full shrink-0 bg-white border border-gray-200 shadow-sm rounded-2xl overflow-hidden">
+      <div class="flex flex-col h-full bg-white overflow-hidden">
+        <div class="px-6 py-5 border-b border-gray-200 flex justify-between items-center">
+          <h2 class="font-bold text-gray-800 text-lg tracking-tight">
+            实时对话队伍
           </h2>
-          <span class="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-semibold">
+          <span class="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-medium">
             {{ store.sessions.length }}
           </span>
         </div>
 
         <!-- 搜索框 -->
-        <div class="px-3 pt-3 pb-1">
+        <div class="px-5 pt-5 pb-3">
           <div class="relative">
-            <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
             </svg>
             <input
               v-model="searchQuery"
               type="text"
-              placeholder="搜索会话..."
-              class="w-full pl-8 pr-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition-all placeholder-gray-400"
+              placeholder="Search..."
+              class="w-full pl-11 pr-4 py-2.5 text-sm bg-transparent border border-gray-200 rounded-lg focus:outline-none focus:border-[#465FFF] focus:ring-1 focus:ring-[#465FFF] transition-all placeholder-gray-400 text-gray-700"
             />
           </div>
         </div>
 
         <!-- 状态筛选 -->
-        <div class="flex gap-1 px-3 py-2">
+        <div class="flex gap-2 px-5 py-2 border-b border-gray-100">
           <button
             v-for="tab in filterTabs" :key="tab.id"
             @click="sessionFilter = tab.id"
             :class="[
-              'px-2.5 py-1 text-[10px] font-bold rounded-md transition-all cursor-pointer',
+              'px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer',
               sessionFilter === tab.id
-                ? 'bg-blue-100 text-blue-700'
-                : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
+                ? 'bg-gray-100 text-[#465FFF]'
+                : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'
             ]"
           >{{ tab.name }}</button>
         </div>
 
-        <div class="flex-1 overflow-y-auto p-2 space-y-2 chat-scroll">
+        <div class="flex-1 overflow-y-auto px-3 py-2 chat-scroll">
           <div
             v-for="session in paginatedSessions"
             :key="session.user_id"
             @click="selectUser(session.user_id)"
             :class="[
-              'p-3 rounded-xl cursor-pointer transition-all duration-300 ease-in-out border relative group',
+              'p-3 mb-0.5 rounded-lg cursor-pointer transition-colors duration-150 relative group flex items-center',
               store.selectedUser === session.user_id
-                ? 'bg-blue-50/80 border-blue-200 ring-2 ring-blue-500/20 shadow-sm transform scale-[1.02]'
-                : 'bg-white border-transparent hover:border-gray-200 hover:bg-gray-50 hover:shadow-sm hover:-translate-y-0.5'
+                ? 'bg-[#F2F4F7]'
+                : 'bg-white hover:bg-[#F2F4F7]'
             ]"
           >
-            <!-- 右上角标签组（竖排堆叠，避免重叠） -->
-            <div class="absolute top-1.5 right-1.5 flex flex-col items-end gap-1 z-10">
-              <!-- 模拟器标签（最高优先级） -->
-              <span
-                v-if="session.platform === 'simulator'"
-                class="text-[8px] font-bold bg-cyan-100 text-cyan-700 px-1.5 py-0.5 rounded-full ring-1 ring-cyan-200 flex items-center gap-0.5 leading-tight"
-              >🤖 模拟器</span>
-
-              <!-- AI 暂停状态标签 -->
-              <span
-                v-else-if="store.pausedSessions[session.user_id]"
-                class="text-[8px] font-bold uppercase bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded-full leading-tight"
-              >人工接管</span>
-
-              <!-- 演示数据标签 -->
-              <span
-                v-else-if="session.is_demo"
-                class="text-[8px] font-bold uppercase bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full leading-tight"
-              >演示数据</span>
-
-              <!-- 平台标签（总是显示在状态标签下方） -->
-              <span
-                v-if="session.platform && session.platform !== 'simulator'"
-                class="text-[8px] uppercase font-bold px-1.5 py-0.5 rounded leading-tight"
-                :class="platformBadgeClass(session.platform)"
-              >{{ session.platform }}</span>
-            </div>
-
-            <div class="flex items-center mb-1.5 pr-16">
-              <div :class="['w-7 h-7 rounded-lg flex items-center justify-center text-white font-black text-[10px] mr-2 shadow-sm shrink-0', getAvatarGradient(session.user_id)]">
-                {{ extractChineseName(formatUserId(session.user_id)) }}
+            <div class="flex items-center w-full">
+              <div class="relative mr-3 shrink-0">
+                <div :class="['w-[44px] h-[44px] rounded-full flex items-center justify-center text-white font-bold text-sm shadow-sm', getAvatarGradient(session.user_id)]">
+                  {{ extractChineseName(formatUserId(session.user_id)) }}
+                </div>
+                <!-- Status dot -->
+                <span class="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white bg-green-500"></span>
               </div>
-              <span class="font-bold text-gray-700 truncate flex-1 text-sm">{{ formatUserId(session.user_id) }}</span>
-            </div>
-            <div class="flex justify-between items-center text-[11px] text-gray-500 font-medium">
-              <span class="flex items-center">
-                <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-                </svg>
-                {{ session.message_count }} 条
-              </span>
-              <span>{{ (session.updated_at || '').split(' ')[1] }}</span>
+              <div class="flex-1 min-w-0 pr-4">
+                <div class="flex justify-between items-baseline mb-1">
+                  <h5 class="font-semibold text-gray-900 truncate text-[15px]">{{ formatUserId(session.user_id) }}</h5>
+                  <span class="text-[12px] text-gray-500 font-medium shrink-0 ml-2">{{ (session.updated_at || '').split(' ')[1]?.slice(0, 5) }}</span>
+                </div>
+                <p class="text-[13px] text-gray-500 truncate flex items-center gap-2">
+                   <span
+                     v-if="session.platform === 'simulator'"
+                     class="text-[10px] font-bold bg-cyan-50 text-cyan-600 px-1.5 rounded-sm"
+                   >模拟器</span>
+                   <span
+                     v-else-if="store.pausedSessions[session.user_id]"
+                     class="text-[10px] font-bold bg-orange-50 text-orange-600 px-1.5 rounded-sm"
+                   >人工接管</span>
+                   <span>共 {{ session.message_count }} 条消息</span>
+                </p>
+              </div>
             </div>
           </div>
-          <div v-if="paginatedSessions.length === 0" class="flex flex-col items-center justify-center h-40 text-gray-400 font-medium">
-            <svg class="w-10 h-10 mb-2 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
-            <p class="text-xs">{{ searchQuery ? '无匹配结果' : '暂无活跃对话' }}</p>
+          <div v-if="paginatedSessions.length === 0" class="flex flex-col items-center justify-center h-40 object-cover text-gray-400">
+            <svg class="w-8 h-8 mb-2 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
+            <p class="text-sm">{{ searchQuery ? '无匹配结果' : '暂无活跃对话' }}</p>
           </div>
         </div>
 
@@ -129,21 +111,21 @@
       </div>
     </div>
 
-    <!-- Center: Chat Window -->
-    <div class="flex-1 flex flex-col h-full min-w-[320px]">
-      <div class="bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col h-full overflow-hidden">
+    <!-- Center: Chat Window (Card) -->
+    <div class="flex-1 flex flex-col h-full min-w-[320px] bg-white border border-gray-200 shadow-sm rounded-2xl overflow-hidden">
+      <div class="flex flex-col h-full bg-white overflow-hidden">
 
         <!-- Chat Header — with AI Pause toggle -->
-        <div v-if="store.selectedUser" class="p-4 border-b bg-gray-50 flex items-center justify-between gap-3">
+        <div v-if="store.selectedUser" class="px-6 py-5 border-b border-gray-200 flex items-center justify-between gap-3 bg-white">
           <div class="flex items-center gap-3">
-            <div :class="['w-10 h-10 rounded-xl flex items-center justify-center text-white font-black shadow-lg ring-2 ring-white', extractChineseName(formatUserId(store.selectedUser)).length > 1 ? 'text-sm' : 'text-lg', getAvatarGradient(store.selectedUser)]">
+            <div class="w-12 h-12 rounded-full flex items-center justify-center text-gray-700 font-bold bg-gray-50 border border-gray-200 shadow-theme-xs">
               {{ extractChineseName(formatUserId(store.selectedUser)) }}
             </div>
             <div>
-              <p class="font-bold text-gray-800 text-sm">{{ formatUserId(store.selectedUser) }}</p>
-              <p class="text-[11px] font-medium" :class="isPaused ? 'text-orange-500' : 'text-green-500'">
-                <span class="inline-block w-1.5 h-1.5 rounded-full mr-1 align-middle" :class="isPaused ? 'bg-orange-500' : 'bg-green-500 animate-pulse'"></span>
-                {{ isPaused ? '人工接管中' : 'AI 自动回复' }}
+              <p class="font-semibold text-gray-800 text-sm">{{ formatUserId(store.selectedUser) }}</p>
+              <p class="text-[11px] font-medium" :class="isPaused ? 'text-orange-600' : 'text-green-600'">
+                <span class="inline-block w-1.5 h-1.5 rounded-full mr-1 align-middle" :class="isPaused ? 'bg-orange-500' : 'bg-green-500'"></span>
+                {{ isPaused ? '人工接管中' : '系统托管中' }}
               </p>
             </div>
           </div>
@@ -168,12 +150,12 @@
             </button>
           </div>
         </div>
-        <div v-else class="p-5 border-b bg-gray-50">
+        <div v-else class="p-5 border-b border-gray-200">
           <p class="text-gray-400 font-medium text-sm">← 左侧选择一个会话查看对话记录</p>
         </div>
 
         <!-- Messages -->
-        <div class="flex-1 overflow-y-auto p-4 space-y-4 chat-scroll" id="chat-window">
+        <div class="flex-1 overflow-y-auto p-6 space-y-6 chat-scroll" id="chat-window">
           <div v-if="!store.selectedUser" class="flex flex-col items-center justify-center h-full text-gray-300">
             <!-- 企业级空状态插画 -->
             <div class="relative w-28 h-28 mb-6">
@@ -209,37 +191,33 @@
 
           <template v-for="(msg, index) in store.currentChat" :key="index">
             <!-- User message -->
-            <div v-if="msg.role === 'user'" class="flex justify-end items-end gap-2 group mb-2">
+            <div v-if="msg.role === 'user'" class="flex justify-end gap-3 group w-full">
               <div class="max-w-[75%] flex flex-col items-end">
-                <div class="bg-gradient-to-br from-blue-500 to-blue-600 text-white px-4 py-2.5 rounded-2xl rounded-br-sm shadow-md transition-shadow hover:shadow-lg">
-                  <p class="text-[13.5px] leading-relaxed break-words whitespace-pre-wrap">{{ msg.content }}</p>
+                <div class="bg-[#465FFF] text-white px-5 py-3 rounded-2xl rounded-tr-sm shadow-sm inline-block">
+                  <p class="text-[15px] leading-relaxed break-words whitespace-pre-wrap">{{ msg.content }}</p>
                 </div>
-                <p class="text-[9px] text-gray-400 mt-1 mr-1 font-medium opacity-0 group-hover:opacity-100 transition-opacity">{{ msg.created_at }}</p>
-              </div>
-              <div :class="['w-8 h-8 rounded-lg shadow-md ring-1 ring-white/80 flex items-center justify-center text-white font-black text-[10px] flex-shrink-0 z-10 hover:scale-110 transition-transform', getAvatarGradient(store.selectedUser || 'user')]">
-                客
+                <p class="text-[12px] text-gray-500 mt-1.5 font-medium">{{ msg.created_at || '' }}</p>
               </div>
             </div>
             <!-- AI / Manual message -->
-            <div v-else class="flex justify-start items-end gap-2 group mb-2">
-              <div class="w-8 h-8 rounded-lg shadow-md ring-1 ring-white/80 flex items-center justify-center text-white font-black text-[10px] flex-shrink-0 z-10 hover:scale-110 transition-transform"
-                   :class="msg.platform === 'manual' ? 'bg-gradient-to-br from-amber-400 to-orange-500' : 'bg-gradient-to-br from-violet-500 to-purple-600'">
-                {{ msg.platform === 'manual' ? '人' : 'AI' }}
+            <div v-else class="flex justify-start gap-3 group w-full">
+              <div class="w-11 h-11 rounded-full border-2 border-white bg-gray-100 flex items-center justify-center text-gray-600 font-bold text-sm flex-shrink-0 z-10 shadow-sm">
+                {{ msg.platform === 'manual' ? '人' : '系' }}
               </div>
               <div class="max-w-[75%] flex flex-col items-start">
-                <div class="bg-white border border-gray-100 text-gray-800 px-4 py-2.5 rounded-2xl rounded-bl-sm shadow-sm transition-shadow hover:shadow-md">
-                  <div class="flex items-center mb-1.5 gap-1.5">
+                <div class="bg-[#F2F4F7] text-gray-800 px-5 py-3 rounded-2xl rounded-tl-sm inline-block">
+                  <div class="flex items-center mb-1.5 gap-2" v-if="msg.platform === 'manual' || msg.platform === 'system'">
                     <span v-if="msg.platform === 'manual'"
-                      class="text-[9px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded uppercase tracking-wider border border-amber-100">
+                      class="text-[10px] font-bold text-orange-600 bg-orange-100/50 px-2 py-0.5 rounded-full uppercase tracking-wide">
                       人工客服
                     </span>
-                    <span v-else class="text-[9px] font-bold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded uppercase tracking-wider border border-purple-100">
-                      PDD AI Bot
+                    <span v-else class="text-[10px] font-semibold text-gray-500 bg-gray-200/50 px-2 py-0.5 rounded-full">
+                      系统回复
                     </span>
                   </div>
-                  <p class="text-[13.5px] leading-relaxed break-words whitespace-pre-wrap">{{ msg.content }}</p>
+                  <p class="text-[15px] leading-relaxed break-words whitespace-pre-wrap">{{ msg.content }}</p>
                 </div>
-                <p class="text-[9px] text-gray-400 mt-1 ml-1 font-medium opacity-0 group-hover:opacity-100 transition-opacity">{{ msg.created_at }}</p>
+                <p class="text-[12px] text-gray-500 mt-1.5 font-medium">{{ msg.created_at || '' }}</p>
               </div>
             </div>
           </template>
@@ -264,7 +242,7 @@
               <button
                 @click="handleSend"
                 :disabled="store.sendingMessage || !manualMessage.trim()"
-                class="px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl shadow-md shadow-amber-200 transition-all flex items-center gap-1.5 text-sm"
+                class="px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-md shadow-sm transition-all flex items-center gap-1.5 text-sm"
               >
                 <svg v-if="store.sendingMessage" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
                   <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
@@ -282,24 +260,23 @@
       </div>
     </div>
 
-    <!-- Right: Extracted Requirements Pane -->
-    <div v-if="store.selectedUser" class="w-full lg:w-[320px] flex flex-col h-full shrink-0">
-      <div class="bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col h-full overflow-hidden">
-        <div class="p-4 border-b flex justify-between items-center bg-purple-50/50">
-          <h2 class="font-bold text-purple-800 flex items-center text-sm">
-            <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
-            结构化需求采集
+    <!-- Right: Extracted Requirements Pane (Card) -->
+    <div v-if="store.selectedUser" class="w-full lg:w-[320px] flex flex-col h-full bg-white shrink-0 border border-gray-200 shadow-sm rounded-2xl overflow-hidden">
+      <div class="flex flex-col h-full overflow-hidden">
+        <div class="px-6 py-5 border-b border-gray-200 flex justify-between items-center">
+          <h2 class="font-bold text-gray-800 text-lg">
+            生产需求单
           </h2>
           <span
             @click="simulateExtracting"
             :class="[
-              'text-[9px] px-2 py-1 rounded-full font-bold uppercase tracking-wider cursor-pointer transition-all',
+              'text-[10px] px-2 py-1 rounded-md font-medium cursor-pointer transition-all border',
               isExtracting
-                ? 'bg-purple-200 text-purple-700 animate-pulse'
-                : 'bg-purple-100 text-purple-600 hover:bg-purple-200 hover:shadow-sm'
+                ? 'bg-gray-100 text-gray-500 border-gray-200'
+                : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
             ]"
           >
-            {{ isExtracting ? 'AI 提取中...' : '重新 AI 提取' }}
+            {{ isExtracting ? '提取中...' : '重新提取' }}
           </span>
         </div>
         <div class="flex-1 overflow-y-auto p-4 space-y-4">
@@ -404,10 +381,10 @@
                 <button
                   v-if="completionRate >= 60"
                   @click="openQuoteModal"
-                  class="w-full bg-gradient-to-r from-purple-600 to-indigo-600 text-white px-4 py-3 rounded-xl text-sm font-black hover:from-purple-700 hover:to-indigo-700 shadow-lg shadow-purple-200 transform hover:scale-[1.02] transition-all flex justify-center items-center gap-2"
+                  class="w-full btn-primary flex justify-center items-center gap-2"
                 >
-                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-                  生成正式报价单
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                  生成生产工单
                 </button>
              </div>
           </div>
@@ -419,35 +396,25 @@
                     <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
                  </div>
                  <p class="font-bold text-gray-700 mb-2">需求尚不明确</p>
-                 <p class="text-[11px] text-gray-400 mb-6 leading-relaxed">AI 正在与买家沟通中<br/>待买家提供"主题、页数"等核心要素后将自动提纯</p>
-                 <button @click="simulateExtracting" class="bg-gray-50 text-purple-600 border border-purple-200 px-4 py-2 rounded-xl text-xs font-bold hover:bg-purple-50 transition-colors inline-block mx-auto">
-                    🔄 AI 重新提取需求
+                 <p class="text-[11px] text-gray-400 mb-6 leading-relaxed">工单关键节点尚未凑齐<br/>请等待客户继续输入</p>
+                 <button @click="simulateExtracting" class="px-3 py-1.5 border border-gray-200 text-gray-600 rounded-md text-xs font-medium hover:bg-gray-50 transition-colors inline-block mx-auto">
+                    手动刷新提取
                  </button>
              </div>
 
              <!-- Extracting Loading State -->
              <div v-else class="text-center w-full px-4">
-                 <div class="relative w-20 h-20 mb-6 mx-auto">
+                 <div class="relative w-12 h-12 mb-4 mx-auto">
                     <svg class="absolute inset-0 w-full h-full text-gray-100" viewBox="0 0 100 100"><circle cx="50" cy="50" fill="none" stroke="currentColor" stroke-width="8" r="40"></circle></svg>
-                    <svg class="absolute inset-0 w-full h-full text-purple-500 transform -rotate-90 origin-center transition-all duration-300" :style="`stroke-dasharray: 251.2; stroke-dashoffset: ${251.2 - (251.2 * extractProgress / 100)}`" viewBox="0 0 100 100"><circle cx="50" cy="50" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round" r="40"></circle></svg>
-                    <div class="absolute inset-0 flex items-center justify-center font-bold text-purple-600 text-sm">{{ extractProgress }}%</div>
+                    <svg class="absolute inset-0 w-full h-full text-gray-500 transform -rotate-90 origin-center transition-all duration-300" :style="`stroke-dasharray: 251.2; stroke-dashoffset: ${251.2 - (251.2 * extractProgress / 100)}`" viewBox="0 0 100 100"><circle cx="50" cy="50" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round" r="40"></circle></svg>
                  </div>
-                 <p class="font-bold text-gray-700 bg-clip-text text-transparent bg-gradient-to-r from-purple-600 to-indigo-600">AI 正在深度解析语义脉络...</p>
-                 <p class="text-[11px] mt-2 text-gray-400 font-medium">识别关键参数组合中</p>
+                 <p class="font-medium text-gray-700">正在提纯需求数据...</p>
+                 <p class="text-[11px] mt-1 text-gray-400">请稍候</p>
              </div>
           </div>
 
           <div v-else class="flex flex-col items-center justify-center h-full text-gray-400 text-sm mt-10">
-             <!-- Empty Chat State -->
-             <div class="relative w-16 h-16 mb-4">
-                <div class="absolute inset-0 border-4 border-gray-100 rounded-full"></div>
-                <div class="absolute inset-0 border-4 border-purple-400 rounded-full animate-[spin_3s_linear_infinite] border-t-transparent border-l-transparent"></div>
-                <div class="absolute inset-0 flex items-center justify-center">
-                   <svg class="w-6 h-6 text-purple-400 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
-                </div>
-             </div>
-             <p class="font-bold text-gray-500 bg-clip-text text-transparent bg-gradient-to-r from-gray-500 to-gray-400">AI 正在实时提纯语义...</p>
-             <p class="text-[11px] mt-1.5 text-gray-400 uppercase tracking-widest font-medium">waiting for input</p>
+             <p class="font-medium text-gray-500">等待信息输入...</p>
           </div>
 
         </div>
