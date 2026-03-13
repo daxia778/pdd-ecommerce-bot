@@ -1,0 +1,57 @@
+# ============================================================
+#   PPT 金牌定制中心 — 模块化 System Prompt 组装配置
+#   版本：v3.0 (Modular Architecture)
+#
+#   灵感来源：Claude Code / Cursor / Manus 的分层提示词架构
+#   修改任一子模块 .md 文件即可热更新对应话术，无需重启。
+#   变量占位符使用 {variable_name} 格式，运行时由代码注入。
+# ============================================================
+
+# 组装顺序：按照此列表的顺序拼接各个 prompt 模块。
+# 调换顺序会影响大模型的注意力分配（排在前面的权重更高）。
+assembly_order:
+  - core_behavior/identity.md          # Part I: 我是谁
+  - core_behavior/tone_and_style.md    # Part I: 语言风格
+  - capabilities/guardrail_rules.md    # Part II: 底线防守（放在 workflow 前面，权重更高）
+  - capabilities/workflow.md           # Part II: 工作流程
+  - pricing_and_rules/dynamic_pricing.md  # Part III: 价目表
+  - few_shots/cases.md                 # Part IV: 典型示范
+  # DynamicContext（RAG 检索结果）在运行时由代码注入到末尾
+
+# RAG 上下文注入模板
+rag_context_template: |
+  <DynamicContext>
+  以下是系统实时注入的关键知识/文档（注意平台规定：不支持直接点击发文件，只能下单后另外发送）：
+  {rag_context}
+  </DynamicContext>
+
+# Slot Filling 追加提示（当检测到 PPT 关键词时追加）
+slot_filling_hint: |
+  <SlotFillingHint>
+  【内部系统提示】
+  检测到PPT需求。请快速确认缺少的关键要素（【页数】、【用途】、【截止时间】），再去报价。
+  如果客户只回复了数字，结合上下文将其理解为页数。注意：无论多简单，最低开机费是30元。
+  严禁推荐具体档位，只列出价格让客户自行选择。
+  </SlotFillingHint>
+
+# PPT 需求识别关键词（命中任一则触发 Slot Filling 追加提示）
+ppt_keywords:
+  - PPT
+  - ppt
+  - 做个
+  - 帮我写
+  - 幻灯片
+  - 排版
+  - 美化
+  - 做一页
+  - 单页
+  - 一张
+  - 封面
+  - 改一下
+  - 海报
+  - 汇报
+  - 答辩
+  - 路演
+  - 总结
+  - 计划书
+  - 课件

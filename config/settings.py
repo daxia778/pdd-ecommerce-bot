@@ -3,9 +3,16 @@
 
 P1-7 增强: 新增 rag_relevance_threshold 配置项（RAG 相关性阈值）
 P0-3 修复: 补充 deepseek_key_list / gemini_key_list 解析 property
+Enterprise: PostgreSQL 升级 + 启动密钥校验
 """
 
+import logging
+import warnings
+
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_startup_logger = logging.getLogger("pdd_bot.settings")
 
 
 class Settings(BaseSettings):
@@ -26,18 +33,18 @@ class Settings(BaseSettings):
     embedding_model: str = "embedding-3"
 
     # ===== 性能配置 =====
-    max_history_length: int = 10
+    max_history_length: int = 40  # 40条(约20轮)
     max_retries: int = 3
 
     # ===== 超时配置 (秒) =====
     # P1-FIX: 核心超时常量集中管理，通过 .env 可运维热更新
-    llm_chat_timeout: int = 45  # LLM 单次对话全局超时保护
+    llm_chat_timeout: int = 30  # P4-Speed: GLM-4.7 较大模型需更多时间，20s→30s 防止误杀
     pipeline_generate_timeout: int = 480  # PPT 生成步骤超时 (Playwright/NotebookLM)
     pipeline_watermark_timeout: int = 120  # 去水印步骤超时
 
     # ===== RAG 配置 =====
     # P1-7: RAG 相关性阈值，低于此分数的知识片段不注入 Prompt（0.0 = 不过滤）
-    rag_relevance_threshold: float = 0.3
+    rag_relevance_threshold: float = 0.1
 
     # ===== 平台配置 (预留) =====
     pdd_app_key: str = ""
@@ -46,8 +53,9 @@ class Settings(BaseSettings):
     # Webhook HMAC 签名密钥（空 = 跳过签名校验）
     pdd_webhook_secret: str = ""
 
-    # ===== 数据库 =====
-    db_url: str = "sqlite:///./data/sqlite/pdd_ecommerce.db"
+    # ===== 数据库 (Enterprise: PostgreSQL 15) =====
+    # Docker 环境自动覆盖; 本地开发可在 .env 中指定 sqlite:///./data/sqlite/pdd_ecommerce.db
+    db_url: str = "postgresql://pdd_bot:pdd_bot_secure_2024@localhost:5432/pdd_ecommerce"
     chroma_db_dir: str = "./data/chroma"
 
     # ===== Redis / Queue =====
@@ -111,6 +119,21 @@ class Settings(BaseSettings):
     @property
     def has_gemini_keys(self) -> bool:
         return len(self.gemini_key_list) > 0
+
+    # ===== Enterprise: 启动时校验关键密钥 =====
+    @model_validator(mode="after")
+    def _warn_missing_secrets(self):
+        """启动时检测缺失的重要安全配置，打印明确的 WARNING 而非静默运行。"""
+        checks = {
+            "JWT_SECRET_KEY": self.jwt_secret_key,
+            "ADMIN_PASSWORD": self.admin_password,
+        }
+        for name, val in checks.items():
+            if not val or val.startswith("your_") or val == "placeholder":
+                msg = f"⚠️  关键安全配置 [{name}] 未设置或使用占位符，请在 .env 中配置真实值！"
+                _startup_logger.warning(msg)
+                warnings.warn(msg, stacklevel=2)
+        return self
 
 
 # 全局单例

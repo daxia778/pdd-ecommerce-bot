@@ -1,5 +1,5 @@
 <template>
-  <div class="space-y-6">
+  <div class="space-y-6 p-6">
     <!-- Overall Health Banner -->
     <div :class="['rounded-2xl shadow-sm border overflow-hidden transition-all', overallBannerClass]">
       <div class="p-6 flex items-center justify-between">
@@ -14,7 +14,7 @@
         </div>
         <button @click="refresh"
           :disabled="loading"
-          class="px-4 py-2 bg-white/80 border border-gray-200 rounded-xl text-xs font-bold text-gray-600 hover:bg-white transition-all flex items-center gap-1.5">
+          class="px-4 py-2 bg-white/80 border border-gray-200 rounded-2xl text-xs font-bold text-gray-600 hover:bg-white transition-all flex items-center gap-1.5">
           <span :class="loading ? 'animate-spin' : ''">↻</span>
           刷新
         </button>
@@ -22,22 +22,21 @@
     </div>
 
     <!-- Pipeline Flow Visualization -->
-    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
       <div class="p-5 border-b bg-gray-50/50">
         <h3 class="text-sm font-bold text-gray-700 flex items-center gap-2">
           <span class="text-base">🔗</span>
           消息处理链路 (Message Pipeline Flow)
         </h3>
-        <p class="text-[10px] text-gray-400 mt-1">买家消息 → AI 处理 → 回复投递 → 企微协同。每个节点独立呈现健康状态。</p>
+        <p class="text-[10px] text-gray-400 mt-1">买家消息 → AI 处理 → 回复投递 → 企微协同。点击节点查看配置详情。</p>
       </div>
 
       <div class="p-6">
-        <!-- Pipeline Flow -->
         <div class="flex items-stretch justify-between gap-2 overflow-x-auto py-2">
           <div v-for="(comp, idx) in store.systemHealth.components" :key="comp.key"
             class="flex items-center gap-2 min-w-0">
-            <!-- Node card -->
-            <div :class="['flex flex-col items-center p-4 rounded-2xl border min-w-[130px] transition-all duration-300 hover:shadow-md hover:-translate-y-0.5', getCardClass(comp.status)]">
+            <div @click="openConfig(comp.key)"
+              :class="['flex flex-col items-center p-4 rounded-2xl border min-w-[130px] transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 cursor-pointer', getCardClass(comp.status)]">
               <span class="text-2xl mb-2">{{ comp.icon }}</span>
               <span class="text-xs font-black text-gray-800 text-center mb-1">{{ comp.name }}</span>
               <span :class="['text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full', getStatusBadge(comp.status)]">
@@ -45,8 +44,6 @@
               </span>
               <p class="text-[10px] text-gray-400 text-center mt-2 leading-tight">{{ comp.detail }}</p>
             </div>
-
-            <!-- Arrow connector -->
             <div v-if="idx < store.systemHealth.components.length - 1"
               class="flex items-center px-1 shrink-0">
               <svg class="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -59,7 +56,7 @@
     </div>
 
     <!-- Detailed Component Grid -->
-    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
       <div class="p-5 border-b">
         <h3 class="text-sm font-bold text-gray-700 flex items-center gap-2">
           <span class="text-base">📊</span>
@@ -69,9 +66,9 @@
       <div class="p-5">
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           <div v-for="comp in store.systemHealth.components" :key="comp.key"
-            :class="['rounded-xl border p-5 transition-all duration-300 hover:shadow-md', getCardClass(comp.status)]">
+            @click="openConfig(comp.key)"
+            :class="['rounded-2xl border p-5 transition-all duration-300 hover:shadow-md cursor-pointer', getCardClass(comp.status)]">
 
-            <!-- Header -->
             <div class="flex items-center justify-between mb-3">
               <div class="flex items-center gap-2">
                 <span class="text-xl">{{ comp.icon }}</span>
@@ -80,38 +77,109 @@
               <span :class="['w-3 h-3 rounded-full shrink-0', getDotClass(comp.status)]"></span>
             </div>
 
-            <!-- Status badge -->
             <div class="mb-3">
               <span :class="['text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full', getStatusBadge(comp.status)]">
                 {{ getStatusLabel(comp.status) }}
               </span>
             </div>
 
-            <!-- Detail -->
             <p class="text-xs text-gray-500 leading-relaxed">{{ comp.detail }}</p>
 
-            <!-- Key identifier -->
-            <div class="mt-3 pt-3 border-t border-gray-100/50">
+            <div class="mt-3 pt-3 border-t border-gray-100/50 flex items-center justify-between">
               <span class="text-[9px] font-mono text-gray-300 uppercase">{{ comp.key }}</span>
+              <span class="text-[9px] text-blue-500 font-bold">点击查看配置 →</span>
             </div>
           </div>
         </div>
       </div>
     </div>
+
+    <!-- Config Modal -->
+    <Teleport to="body">
+      <div v-if="showConfigModal"
+        class="fixed inset-0 z-50 flex items-center justify-center p-4"
+        @click.self="showConfigModal = false">
+        <div class="fixed inset-0 bg-black/40 backdrop-blur-sm" @click="showConfigModal = false"></div>
+        <div class="relative bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden z-10">
+          <!-- Modal Header -->
+          <div class="p-5 border-b bg-gray-50 flex items-center justify-between shrink-0">
+            <div>
+              <h3 class="text-lg font-black text-gray-800">{{ configData?.title || '加载中...' }}</h3>
+              <p class="text-xs text-gray-400 mt-0.5 font-mono">{{ configData?.file_path || '' }}</p>
+            </div>
+            <button @click="showConfigModal = false"
+              class="w-8 h-8 bg-gray-200 hover:bg-gray-300 rounded-full flex items-center justify-center text-gray-500 transition-colors">
+              ✕
+            </button>
+          </div>
+
+          <!-- Modal Body -->
+          <div class="flex-1 overflow-y-auto p-5 space-y-4">
+            <div v-if="configLoading" class="flex items-center justify-center py-12">
+              <div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+              <span class="ml-3 text-sm text-gray-500">加载配置中...</span>
+            </div>
+
+            <template v-else-if="configData">
+              <!-- Env Vars -->
+              <div v-if="configData.env_vars && Object.keys(configData.env_vars).length > 0">
+                <h4 class="text-xs font-bold text-gray-600 uppercase tracking-wider mb-2">环境变量</h4>
+                <div class="bg-gray-50 rounded-xl border border-gray-100 overflow-hidden">
+                  <div v-for="(val, key) in configData.env_vars" :key="key"
+                    class="flex items-center justify-between px-4 py-2.5 border-b border-gray-100 last:border-b-0">
+                    <span class="text-xs font-mono font-bold text-gray-700">{{ key }}</span>
+                    <span class="text-xs font-mono text-gray-400">{{ val }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- File Content -->
+              <div>
+                <h4 class="text-xs font-bold text-gray-600 uppercase tracking-wider mb-2">配置文件内容</h4>
+                <pre class="bg-gray-900 text-green-400 text-xs p-4 rounded-xl overflow-x-auto max-h-[400px] overflow-y-auto font-mono leading-relaxed whitespace-pre-wrap break-all">{{ configData.file_content }}</pre>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { store } from '../store.js';
 
 const loading = computed(() => store.healthLoading);
+const showConfigModal = ref(false);
+const configLoading = ref(false);
+const configData = ref(null);
 
 const refresh = () => store.fetchSystemHealth();
 
 onMounted(() => {
   store.fetchSystemHealth();
 });
+
+const openConfig = async (key) => {
+  showConfigModal.value = true;
+  configLoading.value = true;
+  configData.value = null;
+  try {
+    const res = await fetch(`/api/dashboard/component-config/${key}`, {
+      headers: store._headers(),
+    });
+    if (res.ok) {
+      configData.value = await res.json();
+    } else {
+      configData.value = { title: '加载失败', file_path: '', file_content: `HTTP ${res.status}`, env_vars: {} };
+    }
+  } catch (e) {
+    configData.value = { title: '网络错误', file_path: '', file_content: e.message, env_vars: {} };
+  } finally {
+    configLoading.value = false;
+  }
+};
 
 // Overall status styling
 const overallBannerClass = computed(() => {

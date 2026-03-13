@@ -7,6 +7,7 @@ P1-Root-Cause-Sweep: 使用 Pydantic BaseModel 校验 LLM JSON 输出，
 """
 
 import json
+import os
 import re
 from typing import Literal
 
@@ -27,31 +28,30 @@ ESCALATION_KEYWORDS = [
 # 升级原因识别规则（消息内容 → 原因标签，用作兜底）
 REASON_RULES = [
     # (触发关键词列表, 原因标签, 中文描述)
-    (["加急", "今天", "明天", "当天", "今晚", "明日"], "urgent", "紧急交付"),
-    (["便宜", "打折", "优惠", "降价", "少一点", "能不能低", "砍价", "最低"], "bargain", "价格谈判"),
+    (["加急", "当天", "今晚", "几小时内", "马上要"], "urgent", "紧急交付"),
+    (["便宜", "打折", "优惠", "降价", "少一点", "能不能低", "砍价"], "bargain", "价格谈判"),
     (["投诉", "骗", "差评", "退款", "举报", "不满意", "维权", "消协", "12315"], "complaint", "投诉纠纷"),
     (["万", "高端", "定制模板", "多套", "大项目", "长期合作", "几十套", "批发"], "large_order", "大额/长期订单"),
     (["线下", "上门", "面谈", "见面", "现场"], "offline", "线下服务"),
 ]
 
-INTENT_SYSTEM_PROMPT = """
-你是一个电商智能客服系统的「意图分类器」。你的任务是分析【买家】的话语以及【AI客服】的回复，判断是否需要将对话移交给「人工客服」，并提取原因。
+# 读取外部隔离的意图分类 Prompt（安全加载，文件缺失不会导致崩溃）
+PROMPT_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "prompts"
+)
+INTENT_PROMPT_PATH = os.path.join(PROMPT_DIR, "intent_classification", "prompt.md")
 
-【必须转接人工的条件】
-1. 强烈要求：买家明确说出需要人工客服、真人。
-2. 投诉纠纷：买家情绪激动，提到投诉、骗子、差评、退款、12315等。
-3. 复杂商务：涉及几十上百套的大额订单、长期合作、线下见面。
-4. 价格死磕：买家反复要求降价、给最低价，或者明确不满意当前价格。
-5. 极端紧急：要求几小时内马上出图等极度紧急的交付要求。
-6. AI已承诺：如果AI回复中已经明确表示了将要「转接人工」、「已为您标记人工」，则必须为 true。
+_FALLBACK_INTENT_PROMPT = (
+    "你是一个意图分类器。根据买家消息和AI回复，判断是否需要转人工。"
+    '输出JSON: {"should_escalate": bool, "reason_code": "urgent|bargain|complaint|large_order|offline|other|none", "reason_label": "中文描述"}'
+)
 
-请严格输出以下 JSON 格式（不要输出任何 Markdown 标记和代码块，必须是纯 JSON 字符串）：
-{
-    "should_escalate": true 或 false,
-    "reason_code": "urgent" | "bargain" | "complaint" | "large_order" | "offline" | "other" | "none",
-    "reason_label": "对应的中文标签，如果不需要转人工则是'无'"
-}
-"""
+try:
+    with open(INTENT_PROMPT_PATH, encoding="utf-8") as f:
+        INTENT_SYSTEM_PROMPT = f.read()
+except FileNotFoundError:
+    logger.warning(f"⚠️ 意图分类 Prompt 文件不存在: {INTENT_PROMPT_PATH}，使用内置兜底 Prompt")
+    INTENT_SYSTEM_PROMPT = _FALLBACK_INTENT_PROMPT
 
 
 # P1-Root-Cause-Sweep: 使用 Pydantic 模型校验 LLM 返回的 JSON
@@ -147,11 +147,10 @@ async def analyze(user_message: str, ai_reply: str) -> dict:
         }
 
     except Exception as e:
-        logger.warning(f"LLM 意图识别失败，回退到关键词匹配: {e}")
-        # 降级兜底：用已匹配的模糊信号直接升级
-        reason_code, reason_label = identify_reason(user_message)
+        logger.warning(f"LLM 意图识别失败，回退到安全模式(不升级): {e}")
+        # 降级兜底：改为不升级（避免因 LLM 故障导致大量误升级）
         return {
-            "should_escalate": True,
-            "reason": reason_code,
-            "reason_label": reason_label,
+            "should_escalate": False,
+            "reason": "none",
+            "reason_label": "无",
         }

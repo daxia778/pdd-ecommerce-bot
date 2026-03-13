@@ -1,6 +1,6 @@
 <template>
-  <div class="space-y-6">
-      <div class="bg-white rounded-2xl shadow-sm border-l-4 border-red-500 overflow-hidden">
+  <div class="space-y-6 p-6">
+      <div class="bg-white rounded-2xl border border-gray-200 overflow-hidden">
           <div class="p-6">
               <div class="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
                   <h2 class="text-xl font-bold text-gray-800 flex items-center">
@@ -12,10 +12,10 @@
 
                   <!-- P1.1 过滤标签栏 -->
                   <div class="flex gap-2 flex-wrap">
-                     <button @click="filterType = 'all'" :class="['px-3 py-1.5 rounded-lg text-xs font-bold transition-all', filterType === 'all' ? 'bg-red-500 text-white shadow-md shadow-red-200' : 'bg-gray-100 text-gray-600 hover:bg-gray-200']">全部 ({{ store.escalations.length }})</button>
-                     <button @click="filterType = 'urgent'" :class="['px-3 py-1.5 rounded-lg text-xs font-bold transition-all', filterType === 'urgent' ? 'bg-red-500 text-white shadow-md shadow-red-200' : 'bg-gray-100 text-gray-600 hover:bg-gray-200']">高优/急单</button>
-                     <button @click="filterType = 'conflict'" :class="['px-3 py-1.5 rounded-lg text-xs font-bold transition-all', filterType === 'conflict' ? 'bg-red-500 text-white shadow-md shadow-red-200' : 'bg-gray-100 text-gray-600 hover:bg-gray-200']">售后冲突</button>
-                     <button @click="filterType = 'rule'" :class="['px-3 py-1.5 rounded-lg text-xs font-bold transition-all', filterType === 'rule' ? 'bg-red-500 text-white shadow-md shadow-red-200' : 'bg-gray-100 text-gray-600 hover:bg-gray-200']">规则触发</button>
+                     <button @click="filterType = 'all'" :class="['px-3 py-1.5 rounded-lg text-xs font-bold transition-all', filterType === 'all' ? 'bg-gray-100 text-[#465FFF]' : 'bg-gray-50 text-gray-600 hover:bg-gray-100']">全部 ({{ store.escalations.length }})</button>
+                     <button @click="filterType = 'urgent'" :class="['px-3 py-1.5 rounded-lg text-xs font-bold transition-all', filterType === 'urgent' ? 'bg-gray-100 text-[#465FFF]' : 'bg-gray-50 text-gray-600 hover:bg-gray-100']">高优/急单</button>
+                     <button @click="filterType = 'conflict'" :class="['px-3 py-1.5 rounded-lg text-xs font-bold transition-all', filterType === 'conflict' ? 'bg-gray-100 text-[#465FFF]' : 'bg-gray-50 text-gray-600 hover:bg-gray-100']">售后冲突</button>
+                     <button @click="filterType = 'rule'" :class="['px-3 py-1.5 rounded-lg text-xs font-bold transition-all', filterType === 'rule' ? 'bg-gray-100 text-[#465FFF]' : 'bg-gray-50 text-gray-600 hover:bg-gray-100']">规则触发</button>
                   </div>
               </div>
 
@@ -36,7 +36,7 @@
                           </tr>
                       </thead>
                       <tbody class="bg-white divide-y divide-gray-100">
-                          <tr v-for="(esc, idx) in filteredEscalations" :key="esc.id" class="hover:bg-red-50/30 transition-colors">
+                          <tr v-for="(esc, idx) in filteredEscalations" :key="esc.id" class="hover:bg-gray-50 transition-colors">
                               <td class="px-6 py-4 whitespace-nowrap font-bold text-gray-700">
                                 <div class="flex items-center gap-3">
                                   <div class="relative flex-shrink-0">
@@ -78,13 +78,15 @@
                                      "{{ esc.trigger_message }}"
                                  </div>
                               </td>
-                              <td class="px-6 py-4 text-right space-x-2 whitespace-nowrap">
-                                  <button @click="goToChat(esc.user_id)" class="bg-white border border-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-gray-50 transition-all">
-                                      去回复
-                                  </button>
-                                  <button @click="resolveEscalation(esc.id)" class="bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-red-700 shadow-sm shadow-red-200 transition-all">
-                                      直接关闭
-                                  </button>
+                              <td class="px-4 py-4 text-right whitespace-nowrap">
+                                  <div class="flex items-center justify-end gap-2.5">
+                                    <button @click="goToChat(esc.user_id)" class="bg-white border border-gray-200 text-gray-700 px-3.5 py-1.5 rounded-lg text-xs font-bold hover:bg-gray-50 transition-all">
+                                        去回复
+                                    </button>
+                                    <button @click="resolveEscalation(esc.id)" class="bg-[#465FFF] text-white px-3.5 py-1.5 rounded-lg text-xs font-bold hover:bg-[#3641F5] shadow-sm transition-all">
+                                        直接关闭
+                                    </button>
+                                  </div>
                               </td>
                           </tr>
                           <tr v-if="filteredEscalations.length === 0">

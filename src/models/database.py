@@ -130,12 +130,12 @@ def _make_engine():
 
     if db_url.startswith("sqlite"):
         # SQLite 需特殊参数绕过多线程保护
-        # P1-1: timeout=15 —— 让 SQLite 驱动在遇到写锁争用时自旋最多 15s，
+        # P1-1: timeout=30 —— 让 SQLite 驱动在遇到写锁争用时自旋最多 30s，
         #        而非立刻抛出 OperationalError: database is locked。
-        #        与下方 PRAGMA busy_timeout 双重保障，适配多个 BackgroundTasks 并发写入场景。
+        #        与下方 PRAGMA busy_timeout 双重保障，适配并发测试/极限压力场景。
         connect_args = {
             "check_same_thread": False,
-            "timeout": 15,
+            "timeout": 30,
         }
     else:
         # PostgreSQL / MySQL 的生产级连接池配置
@@ -161,7 +161,7 @@ def _make_engine():
             cursor.execute("PRAGMA cache_size=-64000")  # 64MB Cache
             # P1-1: PRAGMA busy_timeout 作为 C 层二重保障（单位毫秒）
             # 即使 Python 层 timeout 未触发，底层 SQLite C 库也会自旋等待
-            cursor.execute("PRAGMA busy_timeout=15000")
+            cursor.execute("PRAGMA busy_timeout=30000")
             cursor.close()
     else:
         # P3: 对于 PostgreSQL/MySQL 等，直接返回连接池引擎
@@ -175,8 +175,8 @@ SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 # P0-Fix-2: 专用 DB 线程池 — 将同步 SQLAlchemy 操作卸载到独立线程，
 # 避免在 async 路由中阻塞 asyncio 事件循环。
-# max_workers=4: 足够覆盖并发 webhook + chat + dashboard 查询场景
-_db_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="db-io")
+# max_workers=8: 覆盖并发 webhook + chat + dashboard + 压力测试场景
+_db_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="db-io")
 
 
 async def run_in_db_thread(func, *args, **kwargs):

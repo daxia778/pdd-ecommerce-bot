@@ -1,22 +1,29 @@
 <template>
-  <div v-cloak class="w-full h-full flex flex-col">
+  <div v-cloak class="w-full h-screen flex flex-col bg-gray-50 text-gray-800 font-sans overflow-hidden">
     <!-- 未登录：显示登录页 -->
     <LoginForm v-if="!store.isLoggedIn" class="flex-1" />
 
-    <!-- 已登录：主界面 -->
-    <div v-else class="flex-1 flex w-full h-full bg-gray-50 text-gray-800 font-sans overflow-hidden">
-      <Sidebar class="shrink-0" />
-      <main class="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
-        <Header class="w-full shrink-0" />
-        <div class="flex-1 w-full flex flex-col p-6 lg:p-8 overflow-hidden">
-          <MonitorPanel v-show="store.activePanel === 'monitor'" class="flex-1 w-full min-h-0" />
-          <InterventionsPanel v-show="store.activePanel === 'interventions'" class="flex-1 w-full min-h-0 overflow-y-auto scrollbar-hide" />
-          <PipelinePanel v-show="store.activePanel === 'pipeline'" class="flex-1 w-full min-h-0 overflow-y-auto scrollbar-hide" />
-          <KnowledgePanel v-show="store.activePanel === 'knowledge'" class="flex-1 w-full min-h-0 overflow-y-auto scrollbar-hide" />
-          <StatisticsPanel v-show="store.activePanel === 'statistics'" class="flex-1 w-full min-h-0 overflow-y-auto scrollbar-hide" />
-          <BuyerSimulator v-show="store.activePanel === 'simulator'" class="flex-1 w-full min-h-0 overflow-y-auto scrollbar-hide" />
-          <SettingsPanel v-show="store.activePanel === 'settings'" class="flex-1 w-full min-h-0 overflow-y-auto scrollbar-hide" />
-          <SystemHealthPanel v-show="store.activePanel === 'health'" class="flex-1 w-full min-h-0 overflow-y-auto scrollbar-hide" />
+    <!-- 已登录：主界面 (SaaS Dashboard 布局) -->
+    <div v-else class="flex-1 flex w-full h-full overflow-hidden">
+      <!-- 侧边栏 (TailAdmin Style: 白底 + 右侧细灰线) -->
+      <Sidebar class="shrink-0 z-20" />
+      
+      <!-- 右侧主内容区 -->
+      <main class="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative">
+        <Header class="w-full shrink-0 z-30" />
+        
+        <!-- 工作区 (TailAdmin Style: bg-gray-50 + padding) -->
+        <div class="flex-1 w-full overflow-hidden bg-gray-50 flex flex-col">
+           <div class="w-full h-full flex flex-col overflow-hidden">
+              <MonitorPanel v-show="store.activePanel === 'monitor'" class="flex-1 w-full min-h-0" />
+              <InterventionsPanel v-show="store.activePanel === 'interventions'" class="flex-1 w-full min-h-0 overflow-y-auto scrollbar-hide" />
+              <PipelinePanel v-show="store.activePanel === 'pipeline'" class="flex-1 w-full min-h-0 overflow-y-auto scrollbar-hide" />
+              <KnowledgePanel v-show="store.activePanel === 'knowledge'" class="flex-1 w-full min-h-0 overflow-y-auto scrollbar-hide" />
+              <StatisticsPanel v-show="store.activePanel === 'statistics'" class="flex-1 w-full min-h-0 overflow-y-auto scrollbar-hide" />
+              <BuyerSimulator v-show="store.activePanel === 'simulator'" class="flex-1 w-full min-h-0 overflow-y-auto scrollbar-hide" />
+              <SettingsPanel v-show="store.activePanel === 'settings'" class="flex-1 w-full min-h-0 overflow-y-auto scrollbar-hide" />
+              <SystemHealthPanel v-show="store.activePanel === 'health'" class="flex-1 w-full min-h-0 overflow-y-auto scrollbar-hide" />
+           </div>
         </div>
       </main>
     </div>
@@ -45,7 +52,6 @@ watch(() => store.activePanel, (newVal) => {
 });
 
 onMounted(() => {
-  // 已有 token 时自动连接
   if (store.isLoggedIn) store.connect();
 });
 

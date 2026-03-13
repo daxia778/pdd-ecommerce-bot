@@ -5,7 +5,7 @@
 # ============================================================
 
 # --- Stage 1: 依赖安装 ---
-FROM python:3.11-slim AS builder
+FROM python:3.9-slim AS builder
 
 WORKDIR /build
 
@@ -21,7 +21,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # --- Stage 2: 运行环境 ---
-FROM python:3.11-slim
+FROM python:3.9-slim
 
 LABEL maintainer="daxia778"
 LABEL description="PDD E-Commerce AI Bot — RAG + LLM + SQLite 智能客服系统"

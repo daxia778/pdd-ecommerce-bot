@@ -208,9 +208,9 @@ async def simulate_e2e_flow() -> int:
             check(r_res.status_code == 200, "处理关闭成功")
 
     # ── 汇总 ─────────────────────────────────────────────
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"🎉 增强版 E2E 测试完毕 | ✅ {_pass_count} 通过 | ❌ {_fail_count} 失败")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
     return _fail_count
 
 
